@@ -1,0 +1,21 @@
+# Features for the Capstone Project
+
+- [ ] Multi-agent system, including any combination of:
+  - [ ] Agent powered by an LLM
+  - [ ] Parallel agents
+  - [ ] Sequential agents
+  - [ ] Loop agents
+- [ ] Tools, including:
+  - [ ] MCP
+  - [ ] Custom tools
+  - [ ] Built-in tools, such as Google Search or Code Execution
+  - [ ] OpenAPI tools
+  - [ ] Long-running operations (pause/resume agents)
+- [ ] Sessions & Memory:
+  - [ ] Sessions & state management (e.g. InMemorySessionService)
+  - [ ] Long term memory (e.g. Memory Bank)
+- [ ] Context engineering (e.g. context compaction)
+- [ ] Observability: Logging, Tracing, Metrics
+- [ ] Agent evaluation
+- [ ] A2A Protocol
+- [ ] Agent deployment
