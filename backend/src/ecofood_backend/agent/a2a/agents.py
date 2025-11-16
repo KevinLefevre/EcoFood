@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Set
 
 from ..tools.mcp import get_tool_set
 from .context import SessionContext
@@ -48,6 +48,8 @@ class MealArchitectAgent(BaseAgent):
     super().__init__("meal-architect", kind="sequential")
     self._recipes = get_tool_set("recipes")["recipes.search"]
     self._plans = get_tool_set("plans")["plans.save-and-tag"]
+    chef_tools = get_tool_set("chef")
+    self._llm_plan = chef_tools.get("chef.plan-week")
 
   MEAL_SLOTS: List[str] = ["Breakfast", "Lunch", "Dinner"]
 
@@ -59,172 +61,61 @@ class MealArchitectAgent(BaseAgent):
     eco_friendly: bool = False,
     kitchen_tools: Optional[List[Dict[str, Any]]] = None,
   ) -> AgentResult:
-    preferences = profile.get("top_likes", [])
-    primary = preferences[0]["name"] if preferences else "balanced"
-    if eco_friendly:
-      primary = f"plant-based {primary}"
-    tools = [
-      tool["label"]
-      for tool in (kitchen_tools or [])
-      if tool.get("quantity", 0) and tool.get("label")
-    ]
-    tool_categories = [
-      tool["category"]
-      for tool in (kitchen_tools or [])
-      if tool.get("quantity", 0) and tool.get("category")
-    ]
+    if self._llm_plan is None:
+      raise RuntimeError(
+        "chef.plan-week tool unavailable. Install the gemini extra and set GEMINI_API_KEY."
+      )
 
-    def normalize(value: str) -> str:
-      return value.lower().strip()
+    try:
+      llm_payload = self._llm_plan(
+        profile=profile,
+        notes=notes,
+        eco_friendly=eco_friendly,
+        kitchen_tools=kitchen_tools,
+      )
+    except Exception as exc:  # pragma: no cover - ensure visibility
+      raise RuntimeError(f"Gemini menu generation failed: {exc}") from exc
 
-    normalized_labels = [normalize(label) for label in tools]
-    normalized_categories = [normalize(cat) for cat in tool_categories]
-
-    ubiquitous_tools = {"mixing bowl", "whisk", "knife", "cutting board"}
-
-    def matches_available_tools(recipe: Dict[str, Any]) -> bool:
-      requirements = recipe.get("required_tools") or []
-      if not requirements:
-        return True
-      if not normalized_labels and not normalized_categories:
-        return True
-      for requirement in requirements:
-        req = normalize(requirement)
-        if req in ubiquitous_tools:
-          continue
-        label_ok = any(req in label or label in req for label in normalized_labels)
-        category_ok = any(req in category or category in req for category in normalized_categories)
-        if not label_ok and not category_ok:
-          return False
-      return True
-
-    def pick_tool_hint(recipe: Dict[str, Any]) -> str:
-      requirements = recipe.get("required_tools") or []
-      for requirement in requirements:
-        req = normalize(requirement)
-        for label, normalized in zip(tools, normalized_labels):
-          if req in normalized or normalized in req:
-            return label
-        for category, normalized in zip(tool_categories, normalized_categories):
-          if req in normalized or normalized in req:
-            return category
-      if requirements:
-        return requirements[0]
-      if tools:
-        return tools[0]
-      if tool_categories:
-        return tool_categories[0]
-      return "basic cookware"
-
-    recipe_cache: Dict[str, List[Dict[str, Any]]] = {}
-
-    def get_recipes_for_query(query: str) -> List[Dict[str, Any]]:
-      key = query.strip().lower()
-      if key not in recipe_cache:
-        recipe_cache[key] = self._recipes(query=query, limit=10)["recipes"]
-      return recipe_cache[key]
-
-    recipes = get_recipes_for_query(primary)
-    if len(recipes) < 7:
-      additional = get_recipes_for_query("")
-      existing_ids = {recipe["id"] for recipe in recipes}
-      recipes.extend([item for item in additional if item["id"] not in existing_ids])
-    if not recipes:
-      recipes = get_recipes_for_query("")
-
-    matching_recipes = [recipe for recipe in recipes if matches_available_tools(recipe)]
-    recipe_pool = matching_recipes or recipes
-
-    slot_pools: Dict[str, List[Dict[str, Any]]] = {}
-    slot_queries: Dict[str, List[str]] = {
-      "Breakfast": [
-        f"breakfast {primary}",
-        f"breakfast seasonal {primary}",
-        "creative breakfast",
-        primary,
-        "",
-      ],
-      "Lunch": [
-        f"lunch {primary}",
-        "vibrant lunch ideas",
-        f"{primary} bowls",
-        primary,
-        "",
-      ],
-      "Dinner": [
-        f"dinner {primary}",
-        "chef inspired dinner",
-        f"weeknight {primary}",
-        primary,
-        "",
-      ],
-    }
-
-    def resolve_slot_pool(slot: str) -> List[Dict[str, Any]]:
-      for query in slot_queries.get(slot, [primary, ""]):
-        pool = [recipe for recipe in get_recipes_for_query(query) if matches_available_tools(recipe)]
-        if pool:
-          return pool
-      return recipe_pool
-
-    for slot in self.MEAL_SLOTS:
-      slot_pools[slot] = resolve_slot_pool(slot)
-
-    used_recipe_ids: set[str] = set()
-
-    def pick_unique_recipe(
-      slot: str,
-      pool: List[Dict[str, Any]],
-      day_index: int,
-      slot_index: int,
-    ) -> Dict[str, Any]:
-      for recipe in pool:
-        if recipe["id"] not in used_recipe_ids:
-          used_recipe_ids.add(recipe["id"])
-          return recipe
-      for recipe in recipe_pool:
-        if recipe["id"] not in used_recipe_ids:
-          used_recipe_ids.add(recipe["id"])
-          return recipe
-      recipe = pool[(day_index * len(self.MEAL_SLOTS) + slot_index) % len(pool)]
-      return recipe
-
-    days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-    plan: List[Dict[str, Any]] = []
-    for day_index, day in enumerate(days):
-      for slot_index, slot in enumerate(self.MEAL_SLOTS):
-        pool = slot_pools.get(slot) or recipe_pool
-        recipe = pick_unique_recipe(slot, pool, day_index, slot_index)
-        tool_hint = pick_tool_hint(recipe)
-        prep_minutes = recipe.get("prep_minutes")
-        cook_minutes = recipe.get("cook_minutes")
-        calories = recipe.get("calories_per_person")
-        steps = recipe.get("steps") or [
-          "Review recipe steps – data was missing, default instructions applied.",
-        ]
-        ingredients = recipe.get("ingredients") or []
-        plan.append(
-          {
-            "day": day,
-            "meal": slot,
-            "recipe_id": recipe["id"],
-            "title": recipe["title"],
-            "summary": f"{slot}: {recipe['summary']} Tool focus: {tool_hint}.",
-            "ingredients": ingredients,
-            "steps": steps,
-            "prep_minutes": prep_minutes,
-            "cook_minutes": cook_minutes,
-            "calories_per_person": calories,
-          }
-        )
+    plan: List[Dict[str, Any]] = llm_payload.get("plan") or []
+    if not plan:
+      raise RuntimeError("Gemini did not return a plan; cannot proceed.")
 
     stored = self._plans({"week": plan, "notes": notes or ""}, tags=["draft"])
     ctx.set("plan_draft", {"items": plan, "storage": stored})
 
+    payload = {
+      "plan": plan,
+      "plan_id": stored["plan_id"],
+      "notes": notes,
+      "source": "gemini",
+      "llm": {
+        "model": llm_payload.get("model"),
+        "prompt": llm_payload.get("prompt"),
+        "raw_text": llm_payload.get("raw_text"),
+      },
+    }
+
+    return AgentResult(self.name, "plan.candidate", payload)
+
+
+class ChefCurationAgent(BaseAgent):
+  def __init__(self) -> None:
+    super().__init__("chef-curator", kind="sequential")
+    self._chef = get_tool_set("chef")["chef.build-menu"]
+
+  async def run(
+    self,
+    ctx: SessionContext,
+    plan: List[Dict[str, Any]],
+    profile: Dict[str, Any],
+    notes: Optional[str] = None,
+  ) -> AgentResult:
+    curated = self._chef(plan=plan, profile=profile, notes=notes)
+    ctx.set("chef_menu", curated)
     return AgentResult(
       self.name,
-      "plan.candidate",
-      {"plan": plan, "plan_id": stored["plan_id"], "notes": notes},
+      "plan.enhanced",
+      curated,
     )
 
 

@@ -1693,11 +1693,29 @@ function buildTimelineDetails(event: AgentTimelineEvent): string[] {
           `Example: ${sampleDay} – ${sampleTitle}${metrics ? ` (${metrics})` : ''}.`
         );
       }
+      const source = typeof payload.source === 'string' ? payload.source : null;
+      if (source === 'gemini') {
+        lines.push('Plan generated via Gemini culinary model.');
+      } else if (source === 'fallback') {
+        lines.push('Fallback static recipe rotation was used.');
+      }
       if (typeof payload.plan_id === 'string') {
         lines.push(`Plan stored under tag ${payload.plan_id}.`);
       }
       if (typeof payload.notes === 'string' && payload.notes.trim()) {
         lines.push(`Notes forwarded to architect: ${payload.notes.trim()}.`);
+      }
+      break;
+    }
+    case 'plan.enhanced': {
+      const themes = Array.isArray(payload.themes)
+        ? payload.themes.filter((t): t is string => typeof t === 'string')
+        : [];
+      if (themes.length) {
+        lines.push(`Chef themes drafted: ${formatInlineList(themes, 3)}.`);
+      }
+      if (typeof payload.menu_story === 'string' && payload.menu_story.trim()) {
+        lines.push(payload.menu_story.trim());
       }
       break;
     }
@@ -1900,6 +1918,14 @@ const AGENT_TIMELINE_REGISTRY: Record<string, AgentTimelineMeta> = {
       'Final agent merges reviews, builds shopping lists, and exports calendar data.',
     inputs: ['plan', 'nutrition_review', 'pantry_review'],
     outputs: ['shopping_list', 'calendar.ics', 'final_plan']
+  },
+  'chef-curator': {
+    label: 'Chef curator',
+    kind: 'sequential',
+    description:
+      'LLM-inspired chef elevates the menu with themes, pairings, and plating cues.',
+    inputs: ['architect plan[]', 'household profile', 'notes'],
+    outputs: ['plan[] with chef_theme/pairing', 'menu_story']
   }
 };
 

@@ -12,6 +12,7 @@ _TOOL_MODULES: Dict[str, str] = {
   "pantry": ".pantry",
   "calendar": ".calendar_tools",
   "shopping": ".shopping",
+  "chef": ".chef",
 }
 
 
@@ -53,4 +54,3 @@ def get_all_tools() -> Dict[str, Any]:
     tools = get_tool_set(name)
     combined.update(tools)
   return combined
-

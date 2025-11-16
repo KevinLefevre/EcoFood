@@ -1,13 +1,13 @@
 # Features for the Capstone Project
 
-- [ ] Multi-agent system, including any combination of:
-  - [ ] Agent powered by an LLM
-  - [ ] Parallel agents
-  - [ ] Sequential agents
+- [x] Multi-agent system, including any combination of:
+  - [x] Agent powered by an LLM
+  - [x] Parallel agents
+  - [x] Sequential agents
   - [ ] Loop agents
 - [ ] Tools, including:
-  - [ ] MCP
-  - [ ] Custom tools
+  - [x] MCP
+  - [x] Custom tools
   - [ ] Built-in tools, such as Google Search or Code Execution
   - [ ] OpenAPI tools
   - [ ] Long-running operations (pause/resume agents)

@@ -6,6 +6,7 @@ from datetime import date
 from typing import Any, Dict, List, Optional
 
 from .agents import (
+  ChefCurationAgent,
   HouseholdProfilerAgent,
   MealArchitectAgent,
   NutritionReviewAgent,
@@ -37,6 +38,7 @@ class MealPlanningWorkflow:
   def __init__(self) -> None:
     self.household_agent = HouseholdProfilerAgent()
     self.architect_agent = MealArchitectAgent()
+    self.chef_agent = ChefCurationAgent()
     self.nutrition_agent = NutritionReviewAgent()
     self.pantry_agent = PantryReviewAgent()
     self.synthesis_agent = PlanSynthesisAgent()
@@ -57,7 +59,14 @@ class MealPlanningWorkflow:
       kitchen_tools=request.kitchen_tools,
     )
 
-    plan_items = plan_result.payload["plan"]
+    chef_result = await self.chef_agent.run(
+      ctx,
+      plan=plan_result.payload["plan"],
+      profile=profile_result.payload["profile"],
+      notes=request.notes,
+    )
+
+    plan_items = chef_result.payload["plan"]
 
     # Parallel phase: nutrition + pantry reviewers evaluate the same plan.
     nutrition_task = asyncio.create_task(
@@ -93,6 +102,7 @@ class MealPlanningWorkflow:
       "timeline": [
         profile_result.__dict__,
         plan_result.__dict__,
+        chef_result.__dict__,
         *[res.__dict__ for res in review_results],
         final_result.__dict__,
       ],
