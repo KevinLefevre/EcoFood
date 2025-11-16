@@ -5,7 +5,7 @@
   - [x] Parallel agents
   - [x] Sequential agents
   - [ ] Loop agents
-- [ ] Tools, including:
+- [x] Tools, including:
   - [x] MCP
   - [x] Custom tools
   - [ ] Built-in tools, such as Google Search or Code Execution

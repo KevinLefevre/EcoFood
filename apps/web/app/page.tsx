@@ -276,6 +276,19 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
     const listAll = Array.isArray(shopping.all) ? shopping.all : [];
     return { groups, all: listAll };
   }, [timeline]);
+  const calendarExport = useMemo(() => {
+    const finalEvent = timeline.find(
+      (event) => event.stage === 'plan.final' || event.agent === 'plan-synthesizer'
+    );
+    if (!finalEvent || !finalEvent.payload || typeof finalEvent.payload !== 'object') {
+      return null;
+    }
+    const calendar = (finalEvent.payload as Record<string, any>).calendar;
+    if (!calendar || typeof calendar !== 'object') {
+      return null;
+    }
+    return calendar;
+  }, [timeline]);
   const shoppingText = useMemo(() => {
     if (!shoppingList) {
       return '';
@@ -314,6 +327,20 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   }, [shoppingText, currentWeekStart]);
+  const handleDownloadCalendar = useCallback(() => {
+    if (!calendarExport || typeof calendarExport.ics !== 'string') {
+      return;
+    }
+    const blob = new Blob([calendarExport.ics], { type: 'text/calendar' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `ecofood-week-${currentWeekStart}.ics`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, [calendarExport, currentWeekStart]);
   const describeAttendees = useCallback(
     (entry: MealPlanEntry) => {
       const attendeeIds = entry.attendee_ids ?? [];
@@ -833,8 +860,8 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
               calendar.
             </p>
           </div>
-        <div className="flex flex-wrap items-center gap-3 text-xs text-slate-200">
-          <select
+          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-200">
+            <select
               value={selectedHouseholdId ?? ''}
               onChange={(event) =>
                 setSelectedHouseholdId(event.target.value ? Number(event.target.value) : null)
@@ -851,18 +878,25 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
               onClick={() => setSessionViewerOpen(true)}
               disabled={!timeline.length}
               className="rounded-2xl border border-cyan-400/50 bg-cyan-500/10 px-4 py-2 text-xs font-semibold text-cyan-100 shadow-[0_0_18px_rgba(34,211,238,0.35)] hover:bg-cyan-500/20 disabled:border-slate-700 disabled:text-slate-500"
-          >
-            {timeline.length ? 'Open agent session' : 'No session yet'}
-          </button>
-          <button
-            onClick={() => setShoppingModalOpen(true)}
-            disabled={!shoppingList}
-            className="rounded-2xl border border-emerald-400/50 bg-emerald-500/10 px-4 py-2 text-xs font-semibold text-emerald-100 shadow-[0_0_18px_rgba(52,211,153,0.35)] hover:bg-emerald-500/20 disabled:border-slate-700 disabled:text-slate-500"
-          >
-            Export groceries
-          </button>
+            >
+              {timeline.length ? 'Open agent session' : 'No session yet'}
+            </button>
+            <button
+              onClick={() => setShoppingModalOpen(true)}
+              disabled={!shoppingList}
+              className="rounded-2xl border border-emerald-400/50 bg-emerald-500/10 px-4 py-2 text-xs font-semibold text-emerald-100 shadow-[0_0_18px_rgba(52,211,153,0.35)] hover:bg-emerald-500/20 disabled:border-slate-700 disabled:text-slate-500"
+            >
+              Export groceries
+            </button>
+            <button
+              onClick={handleDownloadCalendar}
+              disabled={!calendarExport?.ics}
+              className="rounded-2xl border border-slate-400/50 bg-slate-500/10 px-4 py-2 text-xs font-semibold text-slate-100 hover:bg-slate-500/20 disabled:border-slate-700 disabled:text-slate-500"
+            >
+              Download calendar (.ics)
+            </button>
+          </div>
         </div>
-      </div>
 
         {(error || message) && (
           <div
@@ -968,11 +1002,8 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
                         <p className="line-clamp-2 font-semibold text-slate-100">
                           {entry?.title ?? 'Empty slot'}
                         </p>
-                        <p className="mt-1 text-[0.6rem] text-slate-400">
-                          {entry?.summary ?? 'Ask the planner to fill this meal.'}
-                        </p>
                         {attendanceInfo && (
-                          <p className="mt-2 line-clamp-2 text-[0.55rem] text-slate-300">
+                          <p className="mt-1 line-clamp-2 text-[0.6rem] text-slate-400">
                             {attendanceInfo.summary}
                             {servingsLabel ? ` · ${servingsLabel}` : ''}
                           </p>

@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 from .models import CalendarEvent
 
 
-def calendar_export_ics(events: List[Dict[str, Any]]) -> Dict[str, Any]:
+def build_calendar_ics(events: List[Dict[str, Any]]) -> Dict[str, Any]:
   """
   Export a set of meal events to an iCalendar (ICS) string.
 
@@ -73,7 +73,12 @@ def calendar_export_ics(events: List[Dict[str, Any]]) -> Dict[str, Any]:
   return {"ics": ics_text, "event_count": len(parsed_events)}
 
 
+def calendar_export_ics(events: List[Dict[str, Any]]) -> Dict[str, Any]:
+  from ....mcp.host import call_calendar_export
+
+  return call_calendar_export(events)
+
+
 TOOLS: Dict[str, Any] = {
   "calendar.export-ics": calendar_export_ics,
 }
-
