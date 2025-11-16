@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
+
+DEFAULT_MEMBER_MEALS = ["Breakfast", "Lunch", "Dinner"]
+
+
+MealSchedule = Dict[str, Dict[str, bool]]
 
 
 class MemberBase(BaseModel):
@@ -11,6 +16,8 @@ class MemberBase(BaseModel):
   role: str = "Adult"
   allergens: List[str] = Field(default_factory=list)
   likes: List[str] = Field(default_factory=list)
+  meals: List[str] = Field(default_factory=lambda: list(DEFAULT_MEMBER_MEALS))
+  meal_schedule: Optional[MealSchedule] = None
 
 
 class MemberCreate(MemberBase):
@@ -62,6 +69,13 @@ class MealPlanEntryResponse(BaseModel):
   slot: str
   title: Optional[str] = None
   summary: Optional[str] = None
+  ingredients: List["RecipeIngredient"] = Field(default_factory=list)
+  steps: List[str] = Field(default_factory=list)
+  prep_minutes: Optional[int] = None
+  cook_minutes: Optional[int] = None
+  calories_per_person: Optional[int] = None
+  attendee_ids: List[int] = Field(default_factory=list)
+  guest_count: int = 0
 
   class Config:
     from_attributes = True
@@ -103,6 +117,8 @@ class PlanWeekRequest(BaseModel):
 class MealPlanEntryUpdate(BaseModel):
   title: Optional[str] = None
   summary: Optional[str] = None
+  attendee_ids: Optional[List[int]] = None
+  guest_count: Optional[int] = None
 
 
 class KitchenToolBase(BaseModel):
@@ -126,3 +142,15 @@ class KitchenToolResponse(KitchenToolBase):
 
   class Config:
     from_attributes = True
+
+
+class RecipeIngredient(BaseModel):
+  name: str
+  quantity: Optional[str | float] = None
+  unit: Optional[str] = None
+  notes: Optional[str] = None
+
+
+class MemberMealsUpdate(BaseModel):
+  meals: Optional[List[str]] = None
+  schedule: Optional[MealSchedule] = None

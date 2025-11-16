@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List
+from typing import Dict, List
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +14,7 @@ from ..models import (
   MemberPreference,
 )
 from ..schemas import (
+  DEFAULT_MEMBER_MEALS,
   HouseholdCreate,
   HouseholdResponse,
   KitchenToolCreate,
@@ -21,6 +22,7 @@ from ..schemas import (
   KitchenToolUpdate,
   MemberCreate,
   MemberResponse,
+  MealSchedule,
 )
 
 DEFAULT_KITCHEN_TOOLS: List[KitchenToolCreate] = [
@@ -88,6 +90,8 @@ async def _create_member(db: AsyncSession, household_id: int, payload: MemberCre
     household_id=household_id,
     name=payload.name,
     role=payload.role,
+    **_meals_to_flags(payload.meals),
+    meal_schedule=_normalize_schedule(payload.meal_schedule),
   )
   db.add(member)
   await db.flush()
@@ -134,6 +138,8 @@ async def _to_member_response(db: AsyncSession, member: HouseholdMember) -> Memb
     "role": member.role,
     "allergens": [a.label for a in member.allergens],
     "likes": [p.label for p in member.preferences],
+    "meals": _flags_to_meals(member),
+    "meal_schedule": member.meal_schedule,
   }
   return MemberResponse(**data)
 
@@ -244,3 +250,81 @@ async def _ensure_default_kitchen_tools(db: AsyncSession, household_id: int) -> 
       )
     )
   await db.flush()
+
+
+def _meals_to_flags(meals: List[str]) -> dict[str, bool]:
+  normalized = {meal.lower() for meal in meals or []}
+  return {
+    "eats_breakfast": "breakfast" in normalized or not normalized,
+    "eats_lunch": "lunch" in normalized or not normalized,
+    "eats_dinner": "dinner" in normalized or not normalized,
+  }
+
+
+def _flags_to_meals(member: HouseholdMember) -> List[str]:
+  meals: List[str] = []
+  if member.eats_breakfast:
+    meals.append("Breakfast")
+  if member.eats_lunch:
+    meals.append("Lunch")
+  if member.eats_dinner:
+    meals.append("Dinner")
+  return meals
+
+
+def _normalize_schedule(schedule: MealSchedule | None) -> MealSchedule | None:
+  if not schedule:
+    return None
+  normalized: MealSchedule = {}
+  for day in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]:
+    day_schedule = schedule.get(day, {}) if isinstance(schedule, dict) else {}
+    normalized[day] = {}
+    for slot in DEFAULT_MEMBER_MEALS:
+      slot_value = False
+      if isinstance(day_schedule, dict):
+        slot_value = bool(day_schedule.get(slot))
+      normalized[day][slot] = slot_value
+  return normalized
+
+
+def _derive_meals_from_schedule(schedule: MealSchedule | None) -> List[str]:
+  if not schedule:
+    return []
+  meals: List[str] = []
+  for slot in DEFAULT_MEMBER_MEALS:
+    if any(day_schedule.get(slot) for day_schedule in schedule.values()):
+      meals.append(slot)
+  return meals
+
+
+async def update_member_meals(
+  db: AsyncSession,
+  household_id: int,
+  member_id: int,
+  meals: List[str] | None,
+  schedule: MealSchedule | None,
+) -> MemberResponse | None:
+  result = await db.execute(
+    select(HouseholdMember).where(
+      HouseholdMember.id == member_id,
+      HouseholdMember.household_id == household_id,
+    )
+  )
+  member = result.scalar_one_or_none()
+  if member is None:
+    return None
+  if schedule is not None:
+    normalized_schedule = _normalize_schedule(schedule)
+    member.meal_schedule = normalized_schedule
+    if meals is None:
+      meals = _derive_meals_from_schedule(normalized_schedule)
+  if meals is not None:
+    flags = _meals_to_flags(meals)
+    member.eats_breakfast = flags["eats_breakfast"]
+    member.eats_lunch = flags["eats_lunch"]
+    member.eats_dinner = flags["eats_dinner"]
+    if schedule is None:
+      member.meal_schedule = None
+  await db.commit()
+  await db.refresh(member)
+  return await _to_member_response(db, member)

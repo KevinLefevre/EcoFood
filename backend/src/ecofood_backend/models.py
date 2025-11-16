@@ -46,6 +46,10 @@ class HouseholdMember(Base):
   )
   name: Mapped[str] = mapped_column(String(120))
   role: Mapped[str] = mapped_column(String(50), default="Adult")
+  eats_breakfast: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+  eats_lunch: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+  eats_dinner: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+  meal_schedule: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
   household: Mapped[Household] = relationship(back_populates="members")
   allergens: Mapped[List["MemberAllergen"]] = relationship(
@@ -120,6 +124,13 @@ class MealPlanEntry(Base):
   slot: Mapped[str] = mapped_column(String(40))
   title: Mapped[str | None] = mapped_column(String(200))
   summary: Mapped[str | None] = mapped_column(Text)
+  ingredients: Mapped[list | None] = mapped_column(JSON)
+  steps: Mapped[list | None] = mapped_column(JSON)
+  prep_minutes: Mapped[int | None] = mapped_column(Integer)
+  cook_minutes: Mapped[int | None] = mapped_column(Integer)
+  calories_per_person: Mapped[int | None] = mapped_column(Integer)
+  attendee_ids: Mapped[list | None] = mapped_column(JSON)
+  guest_count: Mapped[int] = mapped_column(Integer, default=0)
 
   plan: Mapped[MealPlan] = relationship(back_populates="entries")
 

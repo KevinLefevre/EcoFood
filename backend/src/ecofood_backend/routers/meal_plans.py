@@ -22,6 +22,8 @@ from ..services import meal_plans as meal_plan_service
 
 router = APIRouter(tags=["meal-plans"])
 workflow = MealPlanningWorkflow()
+DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+MEAL_SLOTS = ["Breakfast", "Lunch", "Dinner"]
 
 
 async def _ensure_household(db: AsyncSession, household_id: int):
@@ -95,6 +97,12 @@ async def create_week_plan(
     }
     for tool in household.kitchen_tools
   ]
+  slot_attendees: dict[tuple[str, str], list[int]] = {}
+  for member in household.members:
+    for day_label in DAY_LABELS:
+      for slot in MEAL_SLOTS:
+        if _member_attends_slot(member, day_label, slot):
+          slot_attendees.setdefault((day_label, slot), []).append(member.id)
 
   session_id = f"plan-{household_id}-{payload.week_start.isoformat()}-{uuid4().hex[:8]}"
 
@@ -121,6 +129,7 @@ async def create_week_plan(
     eco_friendly=payload.eco_friendly,
     use_leftovers=payload.use_leftovers,
     notes=payload.notes,
+    attendee_map=slot_attendees,
   )
   return plan
 
@@ -145,9 +154,33 @@ async def update_meal_plan_entry(
   entry_id: int = Path(..., gt=0),
   db: AsyncSession = Depends(get_session),
 ) -> MealPlanEntryResponse:
-  if payload.title is None and payload.summary is None:
+  if (
+    payload.title is None
+    and payload.summary is None
+    and payload.attendee_ids is None
+    and payload.guest_count is None
+  ):
     raise HTTPException(status_code=400, detail="No fields provided for update.")
   entry = await meal_plan_service.update_entry(db, entry_id, payload)
   if entry is None:
     raise HTTPException(status_code=404, detail="Meal plan entry not found")
   return entry
+
+
+def _member_attends_slot(member, day_label: str, slot: str) -> bool:
+  schedule = getattr(member, "meal_schedule", None)
+  slot_lower = slot.lower()
+  base_allowed = True
+  if slot_lower == "breakfast":
+    base_allowed = bool(getattr(member, "eats_breakfast", True))
+  elif slot_lower == "lunch":
+    base_allowed = bool(getattr(member, "eats_lunch", True))
+  elif slot_lower == "dinner":
+    base_allowed = bool(getattr(member, "eats_dinner", True))
+
+  if isinstance(schedule, dict):
+    day_schedule = schedule.get(day_label)
+    if isinstance(day_schedule, dict) and slot in day_schedule:
+      return bool(day_schedule.get(slot)) and base_allowed
+  slot_lower = slot.lower()
+  return base_allowed

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Tuple
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,10 +20,11 @@ MEAL_SLOTS = ["Breakfast", "Lunch", "Dinner"]
 
 
 def _map_plan(plan: MealPlan) -> MealPlanResponse:
-  entries = [
-    MealPlanEntryResponse.model_validate(entry)
-    for entry in sorted(plan.entries, key=lambda e: (e.day, MEAL_SLOTS.index(e.slot)))
-  ]
+  entries = []
+  for entry in sorted(plan.entries, key=lambda e: (e.day, MEAL_SLOTS.index(e.slot))):
+    if entry.attendee_ids is None:
+      entry.attendee_ids = []
+    entries.append(MealPlanEntryResponse.model_validate(entry))
   return MealPlanResponse(
     id=plan.id,
     household_id=plan.household_id,
@@ -90,6 +91,7 @@ async def save_plan(
   eco_friendly: bool,
   use_leftovers: bool,
   notes: Optional[str],
+  attendee_map: dict[Tuple[str, str], List[int]],
 ) -> MealPlanResponse:
   existing = await db.execute(
     select(MealPlan).where(
@@ -119,6 +121,9 @@ async def save_plan(
     slot = item.get("meal", "Dinner")
     day_offset = DAY_INDEX.get(day_label, 0)
     day_value = week_start + timedelta(days=day_offset)
+    attendees = attendee_map.get((day_label, slot), [])
+    if not attendees:
+      continue
     db.add(
       MealPlanEntry(
         plan_id=plan.id,
@@ -126,6 +131,13 @@ async def save_plan(
         slot=slot,
         title=item.get("title"),
         summary=item.get("summary"),
+        ingredients=item.get("ingredients"),
+        steps=item.get("steps"),
+        prep_minutes=item.get("prep_minutes"),
+        cook_minutes=item.get("cook_minutes"),
+        calories_per_person=item.get("calories_per_person"),
+        attendee_ids=attendees,
+        guest_count=0,
       )
     )
 
@@ -147,6 +159,10 @@ async def update_entry(
     entry.title = payload.title
   if payload.summary is not None:
     entry.summary = payload.summary
+  if payload.attendee_ids is not None:
+    entry.attendee_ids = [int(value) for value in payload.attendee_ids]
+  if payload.guest_count is not None:
+    entry.guest_count = max(0, payload.guest_count)
   await db.commit()
   await db.refresh(entry)
   return MealPlanEntryResponse.model_validate(entry)

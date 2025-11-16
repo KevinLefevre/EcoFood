@@ -30,6 +30,13 @@ type MealPlanEntry = {
   slot: string;
   title?: string | null;
   summary?: string | null;
+  ingredients?: Ingredient[];
+  steps?: string[];
+  prep_minutes?: number | null;
+  cook_minutes?: number | null;
+  calories_per_person?: number | null;
+  attendee_ids?: number[];
+  guest_count?: number | null;
 };
 
 type MealPlan = {
@@ -57,6 +64,14 @@ type AgentTimelineEvent = {
   stage?: string;
   payload?: Record<string, unknown>;
   [key: string]: unknown;
+};
+
+type AgentTimelineMeta = {
+  label: string;
+  kind: 'sequential' | 'parallel';
+  description: string;
+  inputs: string[];
+  outputs: string[];
 };
 
 type PlannerMessage = {
@@ -187,6 +202,7 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
   const [timeline, setTimeline] = useState<AgentTimelineEvent[]>([]);
   const [sessionViewerOpen, setSessionViewerOpen] = useState(false);
   const [agentBriefOpen, setAgentBriefOpen] = useState(false);
+  const [shoppingModalOpen, setShoppingModalOpen] = useState(false);
   const [plannerMessages, setPlannerMessages] = useState<PlannerMessage[]>([]);
   const [plannerInput, setPlannerInput] = useState('');
   const [plannerChatBusy, setPlannerChatBusy] = useState(false);
@@ -208,13 +224,17 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
     slot: string;
     title: string;
     summary: string;
+    attendeeIds: number[];
+    guestCount: number;
   }>({
     open: false,
     entry: null,
     dayLabel: '',
     slot: '',
     title: '',
-    summary: ''
+    summary: '',
+    attendeeIds: [],
+    guestCount: 0
   });
   const [entrySaving, setEntrySaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -227,6 +247,11 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
       null,
     [households, selectedHouseholdId]
   );
+  const memberNameLookup = useMemo(() => {
+    const map = new Map<number, string>();
+    selectedHousehold?.members.forEach((member) => map.set(member.id, member.name));
+    return map;
+  }, [selectedHousehold]);
 
   const entriesBySlot = useMemo(() => {
     const map = new Map<string, MealPlanEntry>();
@@ -236,6 +261,81 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
     });
     return map;
   }, [plan]);
+  const shoppingList = useMemo(() => {
+    const finalEvent = timeline.find(
+      (event) => event.stage === 'plan.final' || event.agent === 'plan-synthesizer'
+    );
+    if (!finalEvent || !finalEvent.payload || typeof finalEvent.payload !== 'object') {
+      return null;
+    }
+    const shopping = (finalEvent.payload as Record<string, any>).shopping_list;
+    if (!shopping || typeof shopping !== 'object') {
+      return null;
+    }
+    const groups = shopping.groups && typeof shopping.groups === 'object' ? shopping.groups : {};
+    const listAll = Array.isArray(shopping.all) ? shopping.all : [];
+    return { groups, all: listAll };
+  }, [timeline]);
+  const shoppingText = useMemo(() => {
+    if (!shoppingList) {
+      return '';
+    }
+    const sections = Object.entries(shoppingList.groups as Record<string, string[]>).map(
+      ([section, items]) => `${section.replace(/_/g, ' ')}:\n- ${items.join('\n- ')}`
+    );
+    const sectionsText = sections.join('\n\n');
+    const flat = shoppingList.all.length
+      ? `\n\nAll items:\n- ${shoppingList.all.join('\n- ')}`
+      : '';
+    return `${sectionsText}${flat}`.trim();
+  }, [shoppingList]);
+  const handleCopyShoppingList = useCallback(() => {
+    if (!shoppingText) {
+      return;
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(shoppingText).then(
+        () => setMessage('Shopping list copied to clipboard.'),
+        () => setError('Unable to copy shopping list.')
+      );
+    }
+  }, [shoppingText]);
+  const handleDownloadShoppingList = useCallback(() => {
+    if (!shoppingText) {
+      return;
+    }
+    const blob = new Blob([shoppingText], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `ecofood-groceries-${currentWeekStart}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, [shoppingText, currentWeekStart]);
+  const describeAttendees = useCallback(
+    (entry: MealPlanEntry) => {
+      const attendeeIds = entry.attendee_ids ?? [];
+      const names = attendeeIds
+        .map((id) => memberNameLookup.get(id))
+        .filter((name): name is string => Boolean(name));
+      const guestCount = entry.guest_count ?? 0;
+      const summaryParts = [];
+      if (names.length) {
+        summaryParts.push(names.join(', '));
+      }
+      if (guestCount > 0) {
+        summaryParts.push(`${guestCount} guest${guestCount === 1 ? '' : 's'}`);
+      }
+      const servings = attendeeIds.length + guestCount;
+      return {
+        summary: summaryParts.length ? summaryParts.join(' • ') : 'No diners assigned',
+        servings,
+      };
+    },
+    [memberNameLookup]
+  );
 
   const appendPlannerMessage = useCallback(
     (role: 'agent' | 'user', text: string) => {
@@ -585,7 +685,9 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
       dayLabel: '',
       slot: '',
       title: '',
-      summary: ''
+      summary: '',
+      attendeeIds: [],
+      guestCount: 0
     });
 
   const closeMealViewer = () =>
@@ -601,13 +703,21 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
       'agent',
       `Loading this week's session: let's refine ${slot} on ${dayLabel}. What would you like to change?`
     );
+    const defaultAttendees =
+      entry.attendee_ids && entry.attendee_ids.length
+        ? [...entry.attendee_ids]
+        : selectedHousehold
+          ? selectedHousehold.members.map((member) => member.id)
+          : [];
     setEntryEditor({
       open: true,
       entry,
       dayLabel,
       slot,
       title: entry.title ?? '',
-      summary: entry.summary ?? ''
+      summary: entry.summary ?? '',
+      attendeeIds: defaultAttendees,
+      guestCount: entry.guest_count ?? 0
     });
   };
 
@@ -619,24 +729,54 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
     closeMealViewer();
   };
 
-  const viewerIngredients = useMemo(() => {
-    if (!mealViewer.entry?.summary) {
-      return ['Seasonal vegetables', 'Protein of choice', 'Whole grains', 'Fresh herbs'];
+  const toggleEntryAttendee = (memberId: number) => {
+    setEntryEditor((state) => {
+      const exists = state.attendeeIds.includes(memberId);
+      const attendeeIds = exists
+        ? state.attendeeIds.filter((id) => id !== memberId)
+        : [...state.attendeeIds, memberId];
+      return { ...state, attendeeIds };
+    });
+  };
+
+  const adjustGuestCount = (delta: number) => {
+    setEntryEditor((state) => ({
+      ...state,
+      guestCount: Math.max(0, state.guestCount + delta)
+    }));
+  };
+
+  const viewerIngredients = useMemo<Ingredient[]>(() => {
+    if (mealViewer.entry?.ingredients && mealViewer.entry.ingredients.length) {
+      return mealViewer.entry.ingredients;
     }
-    const tokens = mealViewer.entry.summary
-      .split(/,|•|-/)
-      .map((token) => token.trim())
-      .filter((token) => token.length > 3)
-      .slice(0, 4);
-    if (!tokens.length) {
-      return ['Seasonal vegetables', 'Protein of choice', 'Whole grains', 'Fresh herbs'];
+    return [
+      { name: 'Seasonal vegetables' },
+      { name: 'Protein of choice' },
+      { name: 'Whole grains' },
+      { name: 'Fresh herbs' }
+    ];
+  }, [mealViewer]);
+
+  const viewerSteps = useMemo(() => {
+    if (mealViewer.entry?.steps && mealViewer.entry.steps.length) {
+      return mealViewer.entry.steps;
     }
-    return tokens;
+    return [
+      'Prep aromatics and chop vegetables.',
+      'Warm cookware and start aromatics.',
+      'Add remaining ingredients and cook until done.',
+      'Finish with herbs or citrus, then serve.'
+    ];
   }, [mealViewer]);
 
   const submitEntryEditor = async (event: FormEvent) => {
     event.preventDefault();
     if (!entryEditor.entry) {
+      return;
+    }
+    if (entryEditor.attendeeIds.length === 0 && entryEditor.guestCount === 0) {
+      setError('Select at least one household member or guest for this meal.');
       return;
     }
     setEntrySaving(true);
@@ -648,7 +788,9 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             title: entryEditor.title,
-            summary: entryEditor.summary
+            summary: entryEditor.summary,
+            attendee_ids: entryEditor.attendeeIds,
+            guest_count: entryEditor.guestCount
           })
         }
       );
@@ -691,8 +833,8 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
               calendar.
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-200">
-            <select
+        <div className="flex flex-wrap items-center gap-3 text-xs text-slate-200">
+          <select
               value={selectedHouseholdId ?? ''}
               onChange={(event) =>
                 setSelectedHouseholdId(event.target.value ? Number(event.target.value) : null)
@@ -709,11 +851,18 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
               onClick={() => setSessionViewerOpen(true)}
               disabled={!timeline.length}
               className="rounded-2xl border border-cyan-400/50 bg-cyan-500/10 px-4 py-2 text-xs font-semibold text-cyan-100 shadow-[0_0_18px_rgba(34,211,238,0.35)] hover:bg-cyan-500/20 disabled:border-slate-700 disabled:text-slate-500"
-            >
-              {timeline.length ? 'Open agent session' : 'No session yet'}
-            </button>
-          </div>
+          >
+            {timeline.length ? 'Open agent session' : 'No session yet'}
+          </button>
+          <button
+            onClick={() => setShoppingModalOpen(true)}
+            disabled={!shoppingList}
+            className="rounded-2xl border border-emerald-400/50 bg-emerald-500/10 px-4 py-2 text-xs font-semibold text-emerald-100 shadow-[0_0_18px_rgba(52,211,153,0.35)] hover:bg-emerald-500/20 disabled:border-slate-700 disabled:text-slate-500"
+          >
+            Export groceries
+          </button>
         </div>
+      </div>
 
         {(error || message) && (
           <div
@@ -727,7 +876,7 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
           </div>
         )}
 
-        <div className="space-y-4">
+        <div className="space-y-4 lg:col-span-2">
           <div className="flex flex-col gap-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-4 md:flex-row md:items-center md:justify-between">
             <div>
               <p className="text-xs uppercase tracking-[0.25em] text-slate-500">
@@ -793,6 +942,11 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
                     const entryHighlightsLeftovers = Boolean(
                       entry?.summary?.toLowerCase().includes('pantry')
                     );
+                    const attendanceInfo = entry ? describeAttendees(entry) : null;
+                    const servingsLabel =
+                      attendanceInfo && attendanceInfo.servings > 0
+                        ? `${attendanceInfo.servings} serving${attendanceInfo.servings === 1 ? '' : 's'}`
+                        : '';
                     return (
                       <div
                         key={`${day}-${slot}`}
@@ -817,10 +971,28 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
                         <p className="mt-1 text-[0.6rem] text-slate-400">
                           {entry?.summary ?? 'Ask the planner to fill this meal.'}
                         </p>
+                        {attendanceInfo && (
+                          <p className="mt-2 line-clamp-2 text-[0.55rem] text-slate-300">
+                            {attendanceInfo.summary}
+                            {servingsLabel ? ` · ${servingsLabel}` : ''}
+                          </p>
+                        )}
                         <div className="mt-2 flex items-center justify-between text-[0.55rem]">
                           <span className="text-slate-400">
                             {hasEntry ? 'Click to refine' : 'Click to add'}
                           </span>
+                          {entry && (
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                startEntryEditor(entry, day, slot);
+                              }}
+                              className="rounded-full border border-slate-700/70 px-2 py-0.5 text-[0.55rem] text-slate-300 hover:border-cyan-400 hover:text-cyan-100"
+                            >
+                              Manage diners
+                            </button>
+                          )}
                           {plan && plan.use_leftovers && entryHighlightsLeftovers && (
                             <span className="rounded-full border border-emerald-400/40 px-2 py-0.5 text-emerald-200">
                               Leftovers
@@ -877,18 +1049,7 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
               <>
                 <div className="space-y-2">
                   {timeline.slice(0, 3).map((event, index) => (
-                    <div
-                      key={`${event.stage}-${index}`}
-                      className="rounded-2xl border border-slate-700/80 bg-slate-950/60 p-3 text-xs text-slate-200"
-                    >
-                      <div className="flex items-center justify-between text-[0.6rem] uppercase tracking-[0.2em] text-slate-500">
-                        <span>{event.agent ?? 'Agent'}</span>
-                        <span>{event.stage}</span>
-                      </div>
-                      <p className="mt-2 text-[0.7rem] text-slate-200">
-                        {summarizeTimelinePayload(event.payload)}
-                      </p>
-                    </div>
+                    <TimelineCard key={`${event.stage}-${index}`} event={event} compact />
                   ))}
                 </div>
                 {timeline.length > 3 && (
@@ -1004,22 +1165,50 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
                 <h5 className="text-xs uppercase tracking-[0.25em] text-slate-400">Ingredients</h5>
                 <ul className="mt-3 list-disc space-y-1 pl-4 text-sm text-slate-200">
                   {viewerIngredients.map((ingredient, idx) => (
-                    <li key={idx}>{ingredient}</li>
+                    <li key={`${ingredient.name}-${idx}`}>
+                      <span className="font-medium text-slate-100">{ingredient.name}</span>
+                      {(ingredient.quantity || ingredient.unit) && (
+                        <span className="text-slate-400">
+                          {' '}
+                          — {ingredient.quantity ?? ''} {ingredient.unit ?? ''}
+                        </span>
+                      )}
+                      {ingredient.notes && (
+                        <span className="text-slate-500"> ({ingredient.notes})</span>
+                      )}
+                    </li>
                   ))}
                 </ul>
               </div>
               <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
                 <h5 className="text-xs uppercase tracking-[0.25em] text-slate-400">Recipe</h5>
-                <div className="mt-3 space-y-2 text-sm text-slate-200">
-                  <p>
-                    {mealViewer.entry.summary ??
-                      'Full recipe steps will be generated once the plan is finalized.'}
-                  </p>
-                  <p>
-                    Finish with acid or fresh herbs to brighten flavors. Adjust texture with broth or
-                    plant milk if it looks too thick.
-                  </p>
+                <div className="mt-2 flex flex-wrap gap-3 text-[0.7rem] text-slate-300">
+                  {mealViewer.entry.prep_minutes != null && (
+                    <span className="rounded-full border border-slate-700 px-2 py-0.5">
+                      Prep: {mealViewer.entry.prep_minutes} min
+                    </span>
+                  )}
+                  {mealViewer.entry.cook_minutes != null && (
+                    <span className="rounded-full border border-slate-700 px-2 py-0.5">
+                      Cook: {mealViewer.entry.cook_minutes} min
+                    </span>
+                  )}
+                  {mealViewer.entry.calories_per_person != null && (
+                    <span className="rounded-full border border-slate-700 px-2 py-0.5">
+                      {mealViewer.entry.calories_per_person} kcal / person
+                    </span>
+                  )}
                 </div>
+                <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-slate-200">
+                  {viewerSteps.map((step, idx) => (
+                    <li key={`${idx}-${step.slice(0, 8)}`}>{step}</li>
+                  ))}
+                </ol>
+                {mealViewer.entry.summary && (
+                  <p className="mt-2 text-xs text-slate-400">
+                    Notes: {mealViewer.entry.summary}
+                  </p>
+                )}
               </div>
               <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
                 <h5 className="text-xs uppercase tracking-[0.25em] text-slate-400">Cooking hints</h5>
@@ -1063,19 +1252,72 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
             </div>
             <div className="mt-4 max-h-[60vh] space-y-3 overflow-y-auto pr-3">
               {timeline.map((event, index) => (
-                <div
-                  key={`${event.agent}-${event.stage}-${index}`}
-                  className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4"
-                >
-                  <div className="flex items-center justify-between text-[0.6rem] uppercase tracking-[0.25em] text-slate-500">
-                    <span>{event.agent ?? 'Agent'}</span>
-                    <span>{event.stage}</span>
-                  </div>
-                  <p className="mt-2 text-sm text-slate-200">
-                    {summarizeTimelinePayload(event.payload)}
-                  </p>
-                </div>
+                <TimelineCard key={`${event.agent}-${event.stage}-${index}`} event={event} />
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {shoppingModalOpen && shoppingList && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/80 px-4 py-6">
+          <div className="w-full max-w-3xl rounded-3xl border border-slate-800 bg-slate-950/90 p-5 text-sm text-slate-100 shadow-[0_0_45px_rgba(16,185,129,0.25)]">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Groceries export</p>
+                <h4 className="text-lg font-semibold text-slate-50">
+                  {weekRangeLabel(currentWeekStart)}
+                </h4>
+              </div>
+              <button
+                onClick={() => setShoppingModalOpen(false)}
+                className="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-300 hover:border-emerald-400 hover:text-emerald-100"
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-4 max-h-[45vh] space-y-3 overflow-y-auto pr-2">
+              {Object.entries(shoppingList.groups as Record<string, string[]>).map(
+                ([section, items]) => (
+                  <div
+                    key={section}
+                    className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4"
+                  >
+                    <p className="text-[0.65rem] uppercase tracking-[0.25em] text-slate-400">
+                      {section.replace(/_/g, ' ')}
+                    </p>
+                    <ul className="mt-2 list-disc space-y-1 pl-4 text-sm text-slate-100">
+                      {items.map((item) => (
+                        <li key={`${section}-${item}`}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )
+              )}
+              {!Object.keys(shoppingList.groups as Record<string, string[]>).length && (
+                <p className="text-sm text-slate-400">No grouped items available.</p>
+              )}
+            </div>
+            <textarea
+              readOnly
+              value={shoppingText}
+              className="mt-4 h-32 w-full rounded-2xl border border-slate-800 bg-slate-950/80 p-3 text-xs text-slate-200"
+            />
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                onClick={handleCopyShoppingList}
+                className="flex-1 rounded-2xl border border-cyan-400/60 px-4 py-2 text-center text-xs font-semibold text-cyan-100 hover:bg-cyan-500/10 disabled:opacity-40"
+                disabled={!shoppingText}
+              >
+                Copy to clipboard
+              </button>
+              <button
+                onClick={handleDownloadShoppingList}
+                className="flex-1 rounded-2xl border border-emerald-400/60 px-4 py-2 text-center text-xs font-semibold text-emerald-100 hover:bg-emerald-500/10 disabled:opacity-40"
+                disabled={!shoppingText}
+              >
+                Download .txt
+              </button>
             </div>
           </div>
         </div>
@@ -1132,6 +1374,56 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
                     placeholder="Notes, prep reminders, or nutrition highlights."
                   />
                 </div>
+                {selectedHousehold && (
+                  <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+                    <label className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                      Who&apos;s eating
+                    </label>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      {selectedHousehold.members.map((member) => (
+                        <label
+                          key={member.id}
+                          className="flex items-center gap-2 rounded-xl border border-slate-800/70 bg-slate-950/40 px-3 py-2 text-sm text-slate-200"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={entryEditor.attendeeIds.includes(member.id)}
+                            onChange={() => toggleEntryAttendee(member.id)}
+                            className="h-4 w-4 rounded border-slate-700 bg-slate-950 text-cyan-500 focus:ring-cyan-400"
+                          />
+                          <span>{member.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <div className="mt-4 flex flex-wrap items-center gap-3 text-sm text-slate-200">
+                      <span className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                        Guests
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => adjustGuestCount(-1)}
+                          className="h-8 w-8 rounded-full border border-slate-700 text-base text-slate-200 hover:border-cyan-400"
+                        >
+                          –
+                        </button>
+                        <span className="w-10 text-center text-lg font-semibold text-slate-50">
+                          {entryEditor.guestCount}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => adjustGuestCount(1)}
+                          className="h-8 w-8 rounded-full border border-slate-700 text-base text-slate-200 hover:border-cyan-400"
+                        >
+                          +
+                        </button>
+                      </div>
+                      <span className="text-xs text-slate-400">
+                        Total servings: {entryEditor.attendeeIds.length + entryEditor.guestCount}
+                      </span>
+                    </div>
+                  </div>
+                )}
                 <button
                   type="submit"
                   disabled={entrySaving}
@@ -1147,8 +1439,138 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
           </div>
         </div>
       )}
+
     </>
   );
+}
+
+function TimelineCard({
+  event,
+  compact = false
+}: {
+  event: AgentTimelineEvent;
+  compact?: boolean;
+}) {
+  const meta = event.agent ? AGENT_TIMELINE_REGISTRY[event.agent] : undefined;
+  const detailLines = buildTimelineDetails(event);
+  const visibleLines = compact ? detailLines.slice(0, 2) : detailLines;
+  const hiddenCount = compact ? detailLines.length - visibleLines.length : 0;
+  const stageLabel = event.stage ?? 'Agent stage';
+  const agentLabel = meta?.label ?? formatAgentName(event.agent ?? 'Agent');
+
+  return (
+    <div
+      className={
+        compact
+          ? 'rounded-2xl border border-slate-700/80 bg-slate-950/60 p-3 text-xs text-slate-200'
+          : 'rounded-2xl border border-slate-800 bg-slate-900/70 p-4 text-sm text-slate-200'
+      }
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-[0.6rem] uppercase tracking-[0.25em] text-slate-500">
+            {meta ? 'LLM A2A agent' : 'Agent'}
+          </p>
+          <p className="text-base font-semibold tracking-tight text-slate-50">
+            {agentLabel}
+          </p>
+          {meta && (
+            <p className="text-[0.65rem] text-slate-400">{meta.description}</p>
+          )}
+        </div>
+        <div className="text-right">
+          <p className="text-[0.6rem] uppercase tracking-[0.25em] text-slate-500">
+            {stageLabel}
+          </p>
+          <span
+            className={`mt-1 inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-[0.6rem] ${
+              meta?.kind === 'parallel'
+                ? 'border-purple-400/50 text-purple-200'
+                : 'border-cyan-400/50 text-cyan-100'
+            }`}
+          >
+            {meta ? `${meta.kind === 'parallel' ? 'Parallel' : 'Sequential'} A2A` : 'A2A step'}
+          </span>
+        </div>
+      </div>
+      {visibleLines.length ? (
+        <ul className="mt-3 space-y-1 text-[0.7rem] text-slate-200">
+          {visibleLines.map((line, index) => (
+            <li key={`${stageLabel}-${index}`} className="flex gap-2">
+              <span className="mt-1 h-1.5 w-1.5 rounded-full bg-cyan-400/70" />
+              <span className="flex-1">{line}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-3 text-[0.7rem] text-slate-400">
+          Payload available in session logs.
+        </p>
+      )}
+      {compact && hiddenCount > 0 && (
+        <p className="mt-2 text-[0.6rem] text-slate-400">
+          +{hiddenCount} more insight
+          {hiddenCount === 1 ? '' : 's'} inside the session viewer.
+        </p>
+      )}
+      {!compact && meta && (
+        <div className="mt-3 rounded-2xl border border-slate-800/70 bg-slate-950/40 p-3 text-[0.65rem] text-slate-300">
+          <p className="text-[0.55rem] uppercase tracking-[0.25em] text-slate-500">
+            Action schema
+          </p>
+          <div className="mt-2 flex flex-col gap-1">
+            <p>
+              <span className="text-slate-400">Inputs:</span>{' '}
+              {meta.inputs.length ? meta.inputs.join(', ') : '—'}
+            </p>
+            <p>
+              <span className="text-slate-400">Outputs:</span>{' '}
+              {meta.outputs.length ? meta.outputs.join(', ') : '—'}
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function buildScheduleFromMeals(meals: string[]): MemberMealSchedule {
+  const normalized = new Set(meals);
+  const schedule: MemberMealSchedule = {} as MemberMealSchedule;
+  CALENDAR_DAYS.forEach((day) => {
+    schedule[day] = {};
+    MEAL_SLOTS.forEach((slot) => {
+      schedule[day][slot] = normalized.has(slot);
+    });
+  });
+  return schedule;
+}
+
+function ensureScheduleStructure(
+  schedule: MemberMealSchedule | null,
+  fallbackMeals: string[]
+): MemberMealSchedule {
+  if (!schedule) {
+    return buildScheduleFromMeals(fallbackMeals);
+  }
+  const normalized: MemberMealSchedule = {} as MemberMealSchedule;
+  CALENDAR_DAYS.forEach((day) => {
+    normalized[day] = {};
+    MEAL_SLOTS.forEach((slot) => {
+      normalized[day][slot] = Boolean(schedule[day]?.[slot]);
+    });
+  });
+  return normalized;
+}
+
+function deriveMealsFromSchedule(schedule: MemberMealSchedule): string[] {
+  const slots: string[] = [];
+  MEAL_SLOTS.forEach((slot) => {
+    if (CALENDAR_DAYS.some((day) => schedule[day]?.[slot])) {
+      slots.push(slot);
+    }
+  });
+  return slots;
 }
 
 function startOfWeekISO(value: Date): string {
@@ -1175,31 +1597,311 @@ function isoDayLabel(isoDate: string): string {
   return labels[day] ?? 'Mon';
 }
 
-function summarizeTimelinePayload(
-  payload?: Record<string, unknown>
-): string {
-  if (!payload) {
-    return 'Awaiting agent output.';
+function buildTimelineDetails(event: AgentTimelineEvent): string[] {
+  const payload = event.payload;
+  if (!payload || !isRecord(payload)) {
+    return [];
   }
-  if (Array.isArray(payload.plan)) {
-    return `Synthesis agent assembled ${payload.plan.length} meals.`;
+
+  const lines: string[] = [];
+
+  switch (event.stage) {
+    case 'profile.ready': {
+      const profile = isRecord(payload.profile) ? payload.profile : null;
+      if (profile) {
+        const memberCount =
+          typeof profile.member_count === 'number' ? profile.member_count : null;
+        if (memberCount !== null) {
+          lines.push(`${memberCount} member${memberCount === 1 ? '' : 's'} normalized for downstream agents.`);
+        }
+        const roles = isRecord(profile.roles)
+          ? Object.entries(profile.roles).filter(
+              ([, value]) => typeof value === 'number'
+            )
+          : [];
+        if (roles.length) {
+          const roleSummary = roles
+            .map(([role, count]) => `${count}× ${role}`)
+            .join(', ');
+          lines.push(`Roles mapped: ${roleSummary}.`);
+        }
+        const allergens = Array.isArray(profile.allergens)
+          ? profile.allergens
+              .map((item) =>
+                isRecord(item) && typeof item.name === 'string'
+                  ? item.name
+                  : null
+              )
+              .filter((name): name is string => Boolean(name))
+          : [];
+        if (allergens.length) {
+          lines.push(
+            `Tracked allergens: ${formatInlineList(allergens, 4)}.`
+          );
+        }
+        const likes = Array.isArray(profile.top_likes)
+          ? profile.top_likes
+              .map((item) =>
+                isRecord(item) && typeof item.name === 'string'
+                  ? item.name
+                  : null
+              )
+              .filter((name): name is string => Boolean(name))
+          : [];
+        if (likes.length) {
+          lines.push(
+            `Top cravings detected: ${formatInlineList(likes, 4)}.`
+          );
+        }
+      }
+      break;
+    }
+    case 'plan.candidate': {
+      const planItems = Array.isArray(payload.plan)
+        ? payload.plan.filter((item): item is Record<string, any> =>
+            isRecord(item)
+          )
+        : [];
+      if (planItems.length) {
+        const dayCount = new Set(
+          planItems
+            .map((item) => (typeof item.day === 'string' ? item.day : null))
+            .filter(Boolean)
+        ).size;
+        lines.push(
+          `Meal architect drafted ${planItems.length} meals covering ${dayCount || '?'} day(s).`
+        );
+        const sample = planItems[0];
+        const sampleTitle =
+          typeof sample.title === 'string' ? sample.title : 'Meal';
+        const sampleDay =
+          typeof sample.day === 'string' ? sample.day : 'Day';
+        const metrics = [
+          typeof sample.prep_minutes === 'number'
+            ? `${sample.prep_minutes}m prep`
+            : null,
+          typeof sample.cook_minutes === 'number'
+            ? `${sample.cook_minutes}m cook`
+            : null,
+          typeof sample.calories_per_person === 'number'
+            ? `${sample.calories_per_person} kcal/person`
+            : null
+        ]
+          .filter(Boolean)
+          .join(' · ');
+        lines.push(
+          `Example: ${sampleDay} – ${sampleTitle}${metrics ? ` (${metrics})` : ''}.`
+        );
+      }
+      if (typeof payload.plan_id === 'string') {
+        lines.push(`Plan stored under tag ${payload.plan_id}.`);
+      }
+      if (typeof payload.notes === 'string' && payload.notes.trim()) {
+        lines.push(`Notes forwarded to architect: ${payload.notes.trim()}.`);
+      }
+      break;
+    }
+    case 'plan.review.nutrition': {
+      const analysis = isRecord(payload.analysis) ? payload.analysis : null;
+      if (analysis) {
+        if (typeof analysis.summary === 'string') {
+          lines.push(analysis.summary);
+        }
+        const estimate = isRecord(analysis.estimate)
+          ? analysis.estimate
+          : null;
+        if (estimate) {
+          const macros = [
+            typeof estimate.calories_estimate === 'number'
+              ? `${estimate.calories_estimate} kcal`
+              : null,
+            typeof estimate.protein_g === 'number'
+              ? `${estimate.protein_g}g protein`
+              : null,
+            typeof estimate.carbs_g === 'number'
+              ? `${estimate.carbs_g}g carbs`
+              : null,
+            typeof estimate.fat_g === 'number'
+              ? `${estimate.fat_g}g fat`
+              : null,
+            typeof estimate.fiber_g === 'number'
+              ? `${estimate.fiber_g}g fiber`
+              : null
+          ]
+            .filter(Boolean)
+            .join(' · ');
+          if (macros) {
+            lines.push(`Macro snapshot: ${macros}.`);
+          }
+        }
+        const labels = Array.isArray(analysis.labels)
+          ? analysis.labels.filter(
+              (label): label is string => typeof label === 'string'
+            )
+          : [];
+        if (labels.length) {
+          lines.push(`Nutrition tags: ${labels.join(', ')}.`);
+        }
+      }
+      break;
+    }
+    case 'plan.review.pantry': {
+      const suggestions = isRecord(payload.suggestions)
+        ? payload.suggestions
+        : null;
+      const suggestionList = suggestions && Array.isArray(suggestions.suggestions)
+        ? suggestions.suggestions
+        : [];
+      lines.push(
+        `Pantry reviewer proposed ${suggestionList.length} leftover usage${suggestionList.length === 1 ? '' : 's'}.`
+      );
+      if (suggestions && typeof suggestions.note === 'string' && suggestions.note.trim()) {
+        lines.push(`Note: ${suggestions.note.trim()}`);
+      }
+      const annotated = Array.isArray(payload.annotated_plan)
+        ? payload.annotated_plan.filter((item): item is Record<string, any> =>
+            isRecord(item)
+          )
+        : [];
+      const annotatedWithHint = annotated.find(
+        (item) => typeof item.pantry_hint === 'string' && item.pantry_hint
+      );
+      if (annotatedWithHint) {
+        const day =
+          typeof annotatedWithHint.day === 'string'
+            ? annotatedWithHint.day
+            : 'Day';
+        const title =
+          typeof annotatedWithHint.title === 'string'
+            ? annotatedWithHint.title
+            : 'Meal';
+        lines.push(
+          `Example assignment: ${day} – ${title} ← ${annotatedWithHint.pantry_hint}.`
+        );
+      }
+      break;
+    }
+    case 'plan.final': {
+      const planItems = Array.isArray(payload.plan) ? payload.plan : [];
+      const shoppingList = isRecord(payload.shopping_list)
+        ? payload.shopping_list
+        : null;
+      const shoppingCount = Array.isArray(shoppingList?.all)
+        ? shoppingList!.all.length
+        : 0;
+      const calendarInfo = isRecord(payload.calendar)
+        ? payload.calendar
+        : null;
+      const calendarEvents =
+        typeof calendarInfo?.event_count === 'number'
+          ? calendarInfo.event_count
+          : null;
+      lines.push(
+        `Synthesis locked ${planItems.length} meals, ${shoppingCount} shopping items, and ${calendarEvents ?? '?'} ICS events.`
+      );
+      const reviewKeys = isRecord(payload.reviews)
+        ? Object.keys(payload.reviews)
+        : [];
+      if (reviewKeys.length) {
+        lines.push(`Merged reviews: ${reviewKeys.join(', ')}.`);
+      }
+      break;
+    }
+    default:
+      break;
   }
-  if (typeof payload.profile === 'object') {
-    return 'Household profile enriched with dietary traits.';
+
+  if (!lines.length) {
+    const fallback = truncatePayload(payload);
+    if (fallback) {
+      lines.push(fallback);
+    }
   }
-  if (typeof payload.analysis === 'object') {
-    return 'Nutrition review finished with actionable advice.';
+
+  return lines;
+}
+
+function formatInlineList(items: string[], limit = 3): string {
+  const clean = items.filter((item) => item && item.trim());
+  if (!clean.length) {
+    return '';
   }
-  if (Array.isArray(payload.suggestions)) {
-    return `Pantry reviewer proposed ${payload.suggestions.length} leftover usages.`;
+  if (clean.length === 1) {
+    return clean[0];
   }
+  const limited = clean.slice(0, limit);
+  const head = limited.slice(0, -1).join(', ');
+  const tail = limited[limited.length - 1];
+  const sentence =
+    limited.length > 1 ? `${head}${head ? ', and ' : ''}${tail}` : tail;
+  if (clean.length > limit) {
+    return `${sentence} (+${clean.length - limit} more)`;
+  }
+  return sentence;
+}
+
+function formatAgentName(raw: string): string {
+  return raw
+    .split(/[-_]/g)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function isRecord(value: unknown): value is Record<string, any> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function truncatePayload(payload: Record<string, unknown>): string {
   try {
     const raw = JSON.stringify(payload);
-    return raw.length > 160 ? `${raw.slice(0, 157)}…` : raw;
+    return raw.length > 180 ? `${raw.slice(0, 177)}…` : raw;
   } catch {
-    return 'Agent payload captured (see logs for JSON).';
+    return 'Payload captured (unable to summarize).';
   }
 }
+
+const AGENT_TIMELINE_REGISTRY: Record<string, AgentTimelineMeta> = {
+  'household-profiler': {
+    label: 'Household profiler',
+    kind: 'sequential',
+    description:
+      'LLM condenses members and dietary notes into a structured profile.',
+    inputs: ['members (names, roles, allergens, likes)'],
+    outputs: ['profile.member_count', 'profile.allergens', 'profile.top_likes']
+  },
+  'meal-architect': {
+    label: 'Meal architect',
+    kind: 'sequential',
+    description:
+      'LLM + recipe tools assemble a draft plan tailored to the profile and kitchen tools.',
+    inputs: ['profile data', 'notes', 'kitchen_tools'],
+    outputs: ['plan[] entries', 'plan_id']
+  },
+  'nutrition-reviewer': {
+    label: 'Nutrition reviewer',
+    kind: 'parallel',
+    description:
+      'Parallel agent computes heuristic macros and wellness tags for each plan.',
+    inputs: ['plan summaries'],
+    outputs: ['analysis.summary', 'analysis.estimate', 'analysis.labels']
+  },
+  'pantry-reviewer': {
+    label: 'Pantry reviewer',
+    kind: 'parallel',
+    description:
+      'Parallel agent matches soon-to-expire ingredients to the drafted plan.',
+    inputs: ['plan[]', 'pantry_items'],
+    outputs: ['suggestions[]', 'annotated_plan[]']
+  },
+  'plan-synthesizer': {
+    label: 'Plan synthesizer',
+    kind: 'sequential',
+    description:
+      'Final agent merges reviews, builds shopping lists, and exports calendar data.',
+    inputs: ['plan', 'nutrition_review', 'pantry_review'],
+    outputs: ['shopping_list', 'calendar.ics', 'final_plan']
+  }
+};
 
 
 type Member = {
@@ -1208,6 +1910,8 @@ type Member = {
   role: string;
   allergens: string[];
   likes: string[];
+  meal_schedule?: MemberMealSchedule | null;
+  meals: string[];
 };
 
 type KitchenTool = {
@@ -1215,6 +1919,13 @@ type KitchenTool = {
   label: string;
   category?: string | null;
   quantity: number;
+};
+
+type Ingredient = {
+  name: string;
+  quantity?: string | number | null;
+  unit?: string | null;
+  notes?: string | null;
 };
 
 type Household = {
@@ -1230,6 +1941,8 @@ type AssistantMessage = {
   role: 'agent' | 'user';
   text: string;
 };
+
+type MemberMealSchedule = Record<string, Record<string, boolean>>;
 
 type HouseholdTabProps = {
   apiBaseUrl: string;
@@ -1258,6 +1971,23 @@ function HouseholdTab({ apiBaseUrl }: HouseholdTabProps) {
   const [kitchenBusy, setKitchenBusy] = useState(false);
   const [newHouseholdName, setNewHouseholdName] = useState('');
   const [creatingHousehold, setCreatingHousehold] = useState(false);
+  const [mealEditor, setMealEditor] = useState<{
+    open: boolean;
+    member: Member | null;
+    selections: string[];
+    advanced: boolean;
+    schedule: MemberMealSchedule;
+    saving: boolean;
+    error: string | null;
+  }>({
+    open: false,
+    member: null,
+    selections: [...MEAL_SLOTS],
+    advanced: false,
+    schedule: buildScheduleFromMeals(MEAL_SLOTS),
+    saving: false,
+    error: null
+  });
 
   const selectedHousehold =
     households.find((household) => household.id === selectedHouseholdId) ?? null;
@@ -1361,6 +2091,125 @@ function HouseholdTab({ apiBaseUrl }: HouseholdTabProps) {
       await fetchHouseholds();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to remove member');
+    }
+  };
+
+  const openMealEditor = (member: Member) => {
+    const initialSelections = member.meals.length ? [...member.meals] : [...MEAL_SLOTS];
+    const normalizedSchedule = ensureScheduleStructure(member.meal_schedule ?? null, initialSelections);
+    setMealEditor({
+      open: true,
+      member,
+      selections: initialSelections,
+      advanced: Boolean(member.meal_schedule),
+      schedule: normalizedSchedule,
+      saving: false,
+      error: null
+    });
+  };
+
+  const closeMealEditor = () => {
+    setMealEditor({
+      open: false,
+      member: null,
+      selections: [...MEAL_SLOTS],
+      advanced: false,
+      schedule: buildScheduleFromMeals(MEAL_SLOTS),
+      saving: false,
+      error: null
+    });
+  };
+
+  const toggleMealSelection = (meal: string) => {
+    setMealEditor((state) => {
+      if (state.advanced) {
+        return state;
+      }
+      const exists = state.selections.includes(meal);
+      const selections = exists
+        ? state.selections.filter((item) => item !== meal)
+        : [...state.selections, meal];
+      return { ...state, selections, schedule: buildScheduleFromMeals(selections) };
+    });
+  };
+
+  const toggleAdvancedSchedule = () => {
+    setMealEditor((state) => {
+      if (!state.member) {
+        return state;
+      }
+      if (state.advanced) {
+        return {
+          ...state,
+          advanced: false,
+          schedule: buildScheduleFromMeals(state.selections)
+        };
+      }
+      return {
+        ...state,
+        advanced: true,
+        schedule: ensureScheduleStructure(state.schedule, state.selections)
+      };
+    });
+  };
+
+  const toggleScheduleSlot = (day: string, slot: string) => {
+    setMealEditor((state) => {
+      if (!state.advanced) {
+        return state;
+      }
+      const schedule: MemberMealSchedule = { ...state.schedule };
+      const daySchedule = { ...(schedule[day] ?? {}) };
+      daySchedule[slot] = !daySchedule[slot];
+      schedule[day] = daySchedule;
+      const derivedMeals = deriveMealsFromSchedule(schedule);
+      return {
+        ...state,
+        schedule,
+        selections: derivedMeals.length ? derivedMeals : state.selections
+      };
+    });
+  };
+
+  const submitMealEditor = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!selectedHousehold || !mealEditor.member) {
+      return;
+    }
+    const derivedMeals = mealEditor.advanced
+      ? deriveMealsFromSchedule(mealEditor.schedule)
+      : mealEditor.selections;
+    if (derivedMeals.length === 0) {
+      setMealEditor((state) => ({
+        ...state,
+        error: 'Select at least one meal.'
+      }));
+      return;
+    }
+    setMealEditor((state) => ({ ...state, saving: true, error: null }));
+    try {
+      const res = await fetch(
+        `${apiBaseUrl}/households/${selectedHousehold.id}/members/${mealEditor.member.id}/meals`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            meals: derivedMeals,
+            schedule: mealEditor.advanced ? mealEditor.schedule : undefined
+          })
+        }
+      );
+      if (!res.ok) {
+        throw new Error('Unable to update meals');
+      }
+      await fetchHouseholds();
+      closeMealEditor();
+    } catch (err) {
+      setMealEditor((state) => ({
+        ...state,
+        error: err instanceof Error ? err.message : 'Unable to update meals',
+        saving: false
+      }));
     }
   };
 
@@ -1620,12 +2469,20 @@ function HouseholdTab({ apiBaseUrl }: HouseholdTabProps) {
                       {member.role}
                     </p>
                   </div>
-                  <button
-                    onClick={() => handleRemoveMember(member.id)}
-                    className="rounded-full border border-slate-700/80 px-2 py-0.5 text-[0.65rem] text-slate-300 hover:border-rose-400 hover:text-rose-100"
-                  >
-                    Remove
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => openMealEditor(member)}
+                      className="rounded-full border border-slate-700/80 px-2 py-0.5 text-[0.65rem] text-cyan-200 hover:border-cyan-400 hover:text-cyan-100"
+                    >
+                      Meals
+                    </button>
+                    <button
+                      onClick={() => handleRemoveMember(member.id)}
+                      className="rounded-full border border-slate-700/80 px-2 py-0.5 text-[0.65rem] text-slate-300 hover:border-rose-400 hover:text-rose-100"
+                    >
+                      Remove
+                    </button>
+                  </div>
                 </div>
 
                 {member.allergens.length > 0 && (
@@ -1663,6 +2520,28 @@ function HouseholdTab({ apiBaseUrl }: HouseholdTabProps) {
                     </div>
                   </div>
                 )}
+
+                <div className="mt-3">
+                  <p className="text-[0.65rem] font-medium uppercase tracking-[0.18em] text-slate-500">
+                    Eats
+                  </p>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {member.meals.length ? (
+                      member.meals.map((meal) => (
+                        <span
+                          key={meal}
+                          className="rounded-full border border-cyan-400/40 bg-cyan-500/10 px-2 py-0.5 text-[0.65rem] text-cyan-100"
+                        >
+                          {meal}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-[0.65rem] text-slate-500">
+                        No meals selected
+                      </span>
+                    )}
+                  </div>
+                </div>
               </article>
             ))}
           </div>
@@ -1966,6 +2845,109 @@ function HouseholdTab({ apiBaseUrl }: HouseholdTabProps) {
                 className="rounded-2xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50"
               >
                 Send
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {mealEditor.open && mealEditor.member && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/80 px-4 py-6">
+          <div className="w-full max-w-lg rounded-3xl border border-slate-800 bg-slate-950/90 p-5 text-sm text-slate-100 shadow-[0_0_45px_rgba(34,211,238,0.25)]">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Member meals</p>
+                <h4 className="text-lg font-semibold text-slate-50">
+                  {mealEditor.member.name}
+                </h4>
+              </div>
+              <button
+                onClick={closeMealEditor}
+                className="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-300 hover:border-cyan-400 hover:text-cyan-100"
+              >
+                Close
+              </button>
+            </div>
+            <form className="mt-4 space-y-4" onSubmit={submitMealEditor}>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-xs text-slate-400">
+                  {mealEditor.advanced
+                    ? 'Toggle specific days/slots below.'
+                    : 'Select the meals this member usually sits for.'}
+                </p>
+                <button
+                  type="button"
+                  onClick={toggleAdvancedSchedule}
+                  className="text-xs text-cyan-200 underline-offset-4 hover:underline"
+                >
+                  {mealEditor.advanced ? 'Switch to simple mode' : 'Advanced per-day schedule'}
+                </button>
+              </div>
+              {!mealEditor.advanced && (
+                <div className="flex flex-wrap gap-2">
+                  {MEAL_SLOTS.map((slot) => {
+                    const active = mealEditor.selections.includes(slot);
+                    return (
+                      <button
+                        type="button"
+                        key={slot}
+                        onClick={() => toggleMealSelection(slot)}
+                        className={`rounded-full border px-4 py-1 text-sm transition ${
+                          active
+                            ? 'border-cyan-400/70 bg-cyan-500/10 text-cyan-100 shadow-[0_0_20px_rgba(34,211,238,0.25)]'
+                            : 'border-slate-700 bg-slate-900/60 text-slate-300 hover:border-cyan-400/40 hover:text-cyan-100'
+                        }`}
+                      >
+                        {slot}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {mealEditor.advanced && (
+                <div className="space-y-2 text-[0.7rem]">
+                  {CALENDAR_DAYS.map((day) => (
+                    <div
+                      key={day}
+                      className="rounded-2xl border border-slate-800 bg-slate-900/60 p-3"
+                    >
+                      <p className="text-[0.65rem] font-semibold uppercase tracking-[0.25em] text-slate-400">
+                        {day}
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {MEAL_SLOTS.map((slot) => {
+                          const active = mealEditor.schedule[day]?.[slot];
+                          return (
+                            <button
+                              type="button"
+                              key={`${day}-${slot}`}
+                              onClick={() => toggleScheduleSlot(day, slot)}
+                              className={`rounded-full border px-3 py-1 text-[0.65rem] ${
+                                active
+                                  ? 'border-emerald-400/60 bg-emerald-500/10 text-emerald-100'
+                                  : 'border-slate-700 bg-slate-950/60 text-slate-400 hover:border-cyan-400/40 hover:text-cyan-100'
+                              }`}
+                            >
+                              {slot}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {mealEditor.error && (
+                <div className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
+                  {mealEditor.error}
+                </div>
+              )}
+              <button
+                type="submit"
+                disabled={mealEditor.saving}
+                className="w-full rounded-2xl bg-gradient-to-r from-cyan-500 to-emerald-400 px-4 py-2 text-center text-sm font-semibold text-slate-950 shadow-[0_0_30px_rgba(34,211,238,0.45)] disabled:opacity-50"
+              >
+                {mealEditor.saving ? 'Saving…' : 'Save meals'}
               </button>
             </form>
           </div>

@@ -16,6 +16,7 @@ from ..schemas import (
   KitchenToolResponse,
   KitchenToolUpdate,
   MemberCreate,
+  MemberMealsUpdate,
   MemberResponse,
 )
 from ..services import households as household_service
@@ -54,6 +55,28 @@ async def remove_member(
 ) -> None:
   await household_service.delete_member(db, household_id, member_id)
   return None
+
+
+@router.patch(
+  "/{household_id}/members/{member_id}/meals",
+  response_model=MemberResponse,
+)
+async def update_member_meals(
+  payload: MemberMealsUpdate,
+  household_id: int = Path(..., gt=0),
+  member_id: int = Path(..., gt=0),
+  db: AsyncSession = Depends(get_session),
+) -> MemberResponse:
+  member = await household_service.update_member_meals(
+    db,
+    household_id=household_id,
+    member_id=member_id,
+    meals=payload.meals,
+    schedule=payload.schedule,
+  )
+  if member is None:
+    raise HTTPException(status_code=404, detail="Household member not found")
+  return member
 
 
 @router.post("/{household_id}/assistant", response_model=AssistantMessageResponse)
