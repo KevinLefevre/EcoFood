@@ -154,3 +154,40 @@ class RecipeIngredient(BaseModel):
 class MemberMealsUpdate(BaseModel):
   meals: Optional[List[str]] = None
   schedule: Optional[MealSchedule] = None
+
+
+class PlanningJobCreate(BaseModel):
+  household_id: int
+  week_start: date
+  eco_friendly: bool = False
+  use_leftovers: bool = False
+  notes: Optional[str] = None
+
+
+class PlanningJobResponse(BaseModel):
+  id: int
+  household_id: int
+  week_start: date
+  status: str
+  eco_friendly: bool
+  use_leftovers: bool
+  notes: Optional[str] = None
+  plan_id: Optional[int] = None
+  created_at: datetime
+  started_at: Optional[datetime] = None
+  completed_at: Optional[datetime] = None
+
+  class Config:
+    from_attributes = True
+
+
+class PlanningJobEventResponse(BaseModel):
+  id: int
+  job_id: int
+  stage: str
+  message: str
+  payload: Optional[Any] = None
+  created_at: datetime
+
+  class Config:
+    from_attributes = True

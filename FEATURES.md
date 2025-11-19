@@ -4,13 +4,13 @@
   - [x] Agent powered by an LLM
   - [x] Parallel agents
   - [x] Sequential agents
-  - [ ] Loop agents
+  - [x] Loop agents
 - [x] Tools, including:
   - [x] MCP
   - [x] Custom tools
   - [ ] Built-in tools, such as Google Search or Code Execution
   - [ ] OpenAPI tools
-  - [ ] Long-running operations (pause/resume agents)
+  - [x] Long-running operations (pause/resume agents)
 - [ ] Sessions & Memory:
   - [ ] Sessions & state management (e.g. InMemorySessionService)
   - [ ] Long term memory (e.g. Memory Bank)

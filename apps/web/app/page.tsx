@@ -21,6 +21,7 @@ const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 
 const CALENDAR_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const DAY_ORDER = CALENDAR_DAYS;
 const MEAL_SLOTS = ['Breakfast', 'Lunch', 'Dinner'];
 
 type MealPlanEntry = {
@@ -203,6 +204,13 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
   const [sessionViewerOpen, setSessionViewerOpen] = useState(false);
   const [agentBriefOpen, setAgentBriefOpen] = useState(false);
   const [shoppingModalOpen, setShoppingModalOpen] = useState(false);
+  const [planningOverlayOpen, setPlanningOverlayOpen] = useState(false);
+  const [planningMessages, setPlanningMessages] = useState<string[]>([]);
+  const [activePlanJobId, setActivePlanJobId] = useState<number | null>(null);
+  const [currentPlanningDay, setCurrentPlanningDay] = useState<string | null>(null);
+  const [planningError, setPlanningError] = useState<string | null>(null);
+  const planJobSourceRef = useRef<EventSource | null>(null);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [plannerMessages, setPlannerMessages] = useState<PlannerMessage[]>([]);
   const [plannerInput, setPlannerInput] = useState('');
   const [plannerChatBusy, setPlannerChatBusy] = useState(false);
@@ -239,6 +247,20 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
   const [entrySaving, setEntrySaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const clearPlanJobChannel = useCallback(() => {
+    if (planJobSourceRef.current) {
+      planJobSourceRef.current.close();
+      planJobSourceRef.current = null;
+    }
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+  }, []);
+
+  const appendPlanningMessage = useCallback((text: string) => {
+    setPlanningMessages((prev) => [...prev, text]);
+  }, []);
   const leftoversPromptedRef = useRef(false);
 
   const selectedHousehold = useMemo(
@@ -341,6 +363,37 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   }, [calendarExport, currentWeekStart]);
+
+  const applyPartialEntries = useCallback(
+    (entries: MealPlanEntry[]) => {
+      if (!entries.length) {
+        return;
+      }
+      setPlan((prev) => {
+        const basePlan: MealPlan =
+          prev ?? {
+            id: -1,
+            household_id: selectedHouseholdId ?? -1,
+            week_start: currentWeekStart,
+            eco_friendly: ecoFriendly,
+            use_leftovers: useLeftovers,
+            notes,
+            timeline: [],
+            entries: []
+          };
+        const map = new Map<string, MealPlanEntry>();
+        basePlan.entries.forEach((entry) => {
+          map.set(`${entry.day}-${entry.slot}`, entry);
+        });
+        entries.forEach((entry) => {
+          map.set(`${entry.day}-${entry.slot}`, entry);
+        });
+        return { ...basePlan, entries: Array.from(map.values()) };
+      });
+    },
+    [selectedHouseholdId, currentWeekStart, ecoFriendly, useLeftovers, notes]
+  );
+
   const describeAttendees = useCallback(
     (entry: MealPlanEntry) => {
       const attendeeIds = entry.attendee_ids ?? [];
@@ -600,6 +653,90 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
     [apiBaseUrl]
   );
 
+  const subscribeToPlanJob = useCallback(
+    function subscribe(jobId: number, resume = false) {
+      clearPlanJobChannel();
+      const source = new EventSource(
+        `${apiBaseUrl}/plan-jobs/${jobId}/events/stream`
+      );
+      planJobSourceRef.current = source;
+      setActivePlanJobId(jobId);
+      setPlanningOverlayOpen(true);
+      setPlanningError(null);
+      if (!resume) {
+        setPlanningMessages([`Job #${jobId} queued`]);
+      }
+
+      source.onmessage = (event) => {
+        if (!event.data) {
+          return;
+        }
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload.message) {
+            appendPlanningMessage(payload.message);
+          }
+          if (payload.stage === 'planning' && typeof payload.payload?.day === 'string') {
+            setCurrentPlanningDay(payload.payload.day);
+          }
+          if (payload.stage === 'planned') {
+            setCurrentPlanningDay(null);
+          }
+          if (payload.payload?.entries) {
+            applyPartialEntries(payload.payload.entries as MealPlanEntry[]);
+          }
+          if (payload.stage === 'completed') {
+            appendPlanningMessage('Job completed. Refreshing plan…');
+            clearPlanJobChannel();
+            setActivePlanJobId(null);
+            setCurrentPlanningDay(null);
+            if (selectedHouseholdId) {
+              fetchPlanForWeek(selectedHouseholdId, currentWeekStart);
+              fetchSummaries(selectedHouseholdId);
+            }
+            setPlanningOverlayOpen(false);
+          } else if (payload.stage === 'error') {
+            setPlanningError(
+              typeof payload.payload?.error === 'string'
+                ? payload.payload.error
+                : payload.message ?? 'Planning failed'
+            );
+            clearPlanJobChannel();
+            setActivePlanJobId(null);
+            setCurrentPlanningDay(null);
+            setPlanningOverlayOpen(true);
+          } else if (payload.stage === 'cancelled') {
+            appendPlanningMessage('Job cancelled.');
+            clearPlanJobChannel();
+            setActivePlanJobId(null);
+            setCurrentPlanningDay(null);
+            setPlanningOverlayOpen(false);
+          }
+        } catch (err) {
+          appendPlanningMessage('Malformed event payload');
+        }
+      };
+
+      source.onerror = () => {
+        appendPlanningMessage('Connection lost. Retrying…');
+        clearPlanJobChannel();
+        reconnectTimerRef.current = setTimeout(() => {
+          subscribe(jobId, true);
+        }, 1500);
+      };
+    },
+    [
+      apiBaseUrl,
+      appendPlanningMessage,
+      applyPartialEntries,
+      clearPlanJobChannel,
+      currentWeekStart,
+      fetchPlanForWeek,
+      fetchSummaries,
+      selectedHouseholdId
+    ]
+  );
+
   useEffect(() => {
     fetchHouseholds();
   }, [fetchHouseholds]);
@@ -616,52 +753,87 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
     }
   }, [selectedHouseholdId, currentWeekStart, fetchPlanForWeek]);
 
-  const shiftWeek = (delta: number) => {
-    setCurrentWeekStart((prev) => {
-      const next = new Date(`${prev}T00:00:00`);
-      next.setDate(next.getDate() + delta * 7);
-      return startOfWeekISO(next);
-    });
-  };
+  useEffect(() => {
+    return () => {
+      clearPlanJobChannel();
+    };
+  }, [clearPlanJobChannel]);
+
+  const shiftWeek = useCallback(
+    (delta: number) => {
+      clearPlanJobChannel();
+      setActivePlanJobId(null);
+      setCurrentPlanningDay(null);
+      setPlanningMessages([]);
+      setPlanningError(null);
+      setPlanningOverlayOpen(false);
+      setCurrentWeekStart((prev) => {
+        const next = new Date(`${prev}T00:00:00`);
+        next.setDate(next.getDate() + delta * 7);
+        return startOfWeekISO(next);
+      });
+    },
+    [clearPlanJobChannel]
+  );
 
   const handlePlanWeek = async () => {
     if (!selectedHouseholdId) {
       return;
     }
+    clearPlanJobChannel();
+    setPlanningMessages([]);
+    setPlanningError(null);
+    setCurrentPlanningDay(null);
+    setActivePlanJobId(null);
     setPlannerBusy(true);
     setMessage('Agents are crafting the week...');
     try {
-      const res = await fetch(
-        `${apiBaseUrl}/households/${selectedHouseholdId}/plans`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            week_start: currentWeekStart,
-            eco_friendly: ecoFriendly,
-            use_leftovers: useLeftovers,
-            notes
-          })
-        }
-      );
+      const res = await fetch(`${apiBaseUrl}/plan-jobs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          household_id: selectedHouseholdId,
+          week_start: currentWeekStart,
+          eco_friendly: ecoFriendly,
+          use_leftovers: useLeftovers,
+          notes
+        })
+      });
       if (!res.ok) {
         throw new Error('Meal planning failed. Check household data.');
       }
-      const data: MealPlan = await res.json();
-      setPlan(data);
-      setTimeline(Array.isArray(data.timeline) ? data.timeline : []);
-      setEcoFriendly(data.eco_friendly);
-      setUseLeftovers(data.use_leftovers);
-      setNotes(data.notes ?? '');
-      setMessage('New plan saved for this week.');
-      setSessionViewerOpen(true);
-      await fetchSummaries(selectedHouseholdId);
+      const job = await res.json();
+      appendPlanningMessage(`Job #${job.id} accepted. Planning ${DAY_ORDER[0]}…`);
+      subscribeToPlanJob(job.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to plan meals');
     } finally {
       setPlannerBusy(false);
     }
   };
+
+  const handleAbortPlanning = useCallback(async () => {
+    if (!activePlanJobId) {
+      setPlanningOverlayOpen(false);
+      return;
+    }
+    appendPlanningMessage('Abort requested by user.');
+    try {
+      const res = await fetch(`${apiBaseUrl}/plan-jobs/${activePlanJobId}`, {
+        method: 'DELETE'
+      });
+      if (!res.ok && res.status !== 404 && res.status !== 409) {
+        throw new Error('Unable to cancel planning job');
+      }
+    } catch (err) {
+      setPlanningError(err instanceof Error ? err.message : 'Failed to cancel job');
+    } finally {
+      clearPlanJobChannel();
+      setActivePlanJobId(null);
+      setCurrentPlanningDay(null);
+      setPlanningOverlayOpen(false);
+    }
+  }, [activePlanJobId, apiBaseUrl, appendPlanningMessage, clearPlanJobChannel]);
 
   const handleResetWeek = async () => {
     if (!selectedHouseholdId) {
@@ -1061,10 +1233,14 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
               <AgentBriefControls />
               <button
                 onClick={handlePlanWeek}
-                disabled={!selectedHouseholdId || plannerBusy}
+                disabled={!selectedHouseholdId || plannerBusy || Boolean(activePlanJobId)}
                 className="w-full rounded-2xl bg-gradient-to-r from-cyan-500 to-emerald-400 px-4 py-2 text-center text-sm font-semibold text-slate-950 shadow-[0_0_30px_rgba(34,211,238,0.45)] disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {plannerBusy ? 'Coordinating agents…' : 'Plan this week'}
+                {plannerBusy
+                  ? 'Coordinating agents…'
+                  : activePlanJobId
+                    ? 'Planner running…'
+                    : 'Plan this week'}
               </button>
             </div>
             <PlannerChatPanel />
@@ -1260,11 +1436,81 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
                 Edit this meal
               </button>
             </div>
-          </div>
-        </div>
-      )}
+      </div>
+    </div>
+  )}
 
-      {sessionViewerOpen && (
+  {planningOverlayOpen && (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/80 px-4 py-6">
+      <div className="w-full max-w-lg rounded-3xl border border-slate-800 bg-slate-950/90 p-5 text-sm text-slate-100 shadow-[0_0_45px_rgba(34,211,238,0.35)]">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Loop agent status</p>
+            <p className="text-[0.7rem] text-slate-500">
+              {activePlanJobId ? `Job #${activePlanJobId}` : 'Awaiting next run'}
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              if (!activePlanJobId) {
+                setPlanningOverlayOpen(false);
+              }
+            }}
+            className="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-400 hover:border-cyan-400 hover:text-cyan-100 disabled:opacity-40"
+            disabled={Boolean(activePlanJobId)}
+          >
+            Close
+          </button>
+        </div>
+        {currentPlanningDay && (
+          <p className="mt-3 text-sm text-cyan-200">
+            Planning {currentPlanningDay}…
+          </p>
+        )}
+        {planningError && (
+          <p className="mt-3 rounded-2xl border border-rose-500/50 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
+            {planningError}
+          </p>
+        )}
+        <div className="mt-3 max-h-64 space-y-2 overflow-y-auto pr-2 text-xs text-slate-200">
+          {planningMessages.map((msg, idx) => (
+            <p key={`${msg}-${idx}`}>{msg}</p>
+          ))}
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2 text-xs">
+          {activePlanJobId && (
+            <button
+              onClick={handleAbortPlanning}
+              className="rounded-full border border-rose-400/50 px-4 py-2 text-rose-100 hover:border-rose-300 hover:text-rose-200"
+            >
+              Abort planning
+            </button>
+          )}
+          {planningError && !activePlanJobId && (
+            <button
+              onClick={() => {
+                setPlanningOverlayOpen(false);
+                handlePlanWeek();
+              }}
+              className="rounded-full border border-cyan-400/50 px-4 py-2 text-cyan-100 hover:border-cyan-300 hover:text-cyan-50"
+            >
+              Retry now
+            </button>
+          )}
+          {!activePlanJobId && !planningError && (
+            <button
+              onClick={() => setPlanningOverlayOpen(false)}
+              className="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:border-cyan-400 hover:text-cyan-100"
+            >
+              Hide overlay
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )}
+
+  {sessionViewerOpen && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/80 px-4 py-6">
           <div className="w-full max-w-3xl rounded-3xl border border-slate-800 bg-slate-950/90 p-5 text-sm text-slate-100 shadow-[0_0_45px_rgba(15,118,255,0.25)]">
             <div className="flex items-center justify-between">
@@ -1610,7 +1856,7 @@ function startOfWeekISO(value: Date): string {
   const diff = day === 0 ? -6 : 1 - day;
   date.setHours(0, 0, 0, 0);
   date.setDate(date.getDate() + diff);
-  return date.toISOString().slice(0, 10);
+  return formatLocalISODate(date);
 }
 
 function weekRangeLabel(weekStartISO: string): string {
@@ -1626,6 +1872,13 @@ function isoDayLabel(isoDate: string): string {
   const labels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const day = new Date(`${isoDate}T00:00:00`).getDay();
   return labels[day] ?? 'Mon';
+}
+
+function formatLocalISODate(date: Date): string {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 function buildTimelineDetails(event: AgentTimelineEvent): string[] {

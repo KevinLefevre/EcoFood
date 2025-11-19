@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .database import init_db
 from .routers import households as households_router
 from .routers import meal_plans as meal_plans_router
+from .routers import plan_jobs as plan_jobs_router
 
 
 def create_app() -> FastAPI:
@@ -52,6 +53,7 @@ def create_app() -> FastAPI:
 
   app.include_router(households_router.router)
   app.include_router(meal_plans_router.router)
+  app.include_router(plan_jobs_router.router)
 
   return app
 

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+import json
+import logging
 from typing import Any, Dict, List, Literal, Optional, Set
 
 from ..tools.mcp import get_tool_set
@@ -9,6 +11,8 @@ from .context import SessionContext
 
 
 AgentKind = Literal["sequential", "parallel"]
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -46,7 +50,6 @@ class HouseholdProfilerAgent(BaseAgent):
 class MealArchitectAgent(BaseAgent):
   def __init__(self) -> None:
     super().__init__("meal-architect", kind="sequential")
-    self._recipes = get_tool_set("recipes")["recipes.search"]
     self._plans = get_tool_set("plans")["plans.save-and-tag"]
     chef_tools = get_tool_set("chef")
     self._llm_plan = chef_tools.get("chef.plan-week")
@@ -60,6 +63,7 @@ class MealArchitectAgent(BaseAgent):
     notes: Optional[str] = None,
     eco_friendly: bool = False,
     kitchen_tools: Optional[List[Dict[str, Any]]] = None,
+    days: Optional[List[str]] = None,
   ) -> AgentResult:
     if self._llm_plan is None:
       raise RuntimeError(
@@ -72,13 +76,35 @@ class MealArchitectAgent(BaseAgent):
         notes=notes,
         eco_friendly=eco_friendly,
         kitchen_tools=kitchen_tools,
+        days=days,
       )
     except Exception as exc:  # pragma: no cover - ensure visibility
       raise RuntimeError(f"Gemini menu generation failed: {exc}") from exc
 
+    logger.info(
+      "[MealArchitect] plan request days=%s first-lines=%s",
+      days or self.MEAL_SLOTS,
+      (llm_payload.get("prompt") or "").splitlines()[0:4],
+    )
+    prompt_text = llm_payload.get("prompt") or ""
+    if prompt_text:
+      logger.info("[MealArchitect] prompt body (len=%s)>>>\n%s", len(prompt_text), prompt_text)
+
     plan: List[Dict[str, Any]] = llm_payload.get("plan") or []
     if not plan:
+      prompt_preview = (llm_payload.get("prompt") or "")[:240]
+      logger.error(
+        "Gemini returned an empty plan (days=%s). Prompt preview: %s",
+        ",".join(days or self.MEAL_SLOTS),
+        prompt_preview,
+      )
       raise RuntimeError("Gemini did not return a plan; cannot proceed.")
+
+    try:
+      plan_preview = json.dumps(plan[:3], ensure_ascii=False)
+    except Exception:
+      plan_preview = str(plan[:3])
+    logger.info("[MealArchitect] plan preview=%s", plan_preview[:1200])
 
     stored = self._plans({"week": plan, "notes": notes or ""}, tags=["draft"])
     ctx.set("plan_draft", {"items": plan, "storage": stored})

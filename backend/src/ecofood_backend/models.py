@@ -147,3 +147,39 @@ class KitchenTool(Base):
   quantity: Mapped[int] = mapped_column(Integer, default=0)
 
   household: Mapped[Household] = relationship(back_populates="kitchen_tools")
+
+
+class PlanningJob(Base):
+  __tablename__ = "planning_jobs"
+
+  id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+  household_id: Mapped[int] = mapped_column(ForeignKey("households.id", ondelete="CASCADE"), index=True)
+  week_start: Mapped[Date] = mapped_column(Date, index=True)
+  status: Mapped[str] = mapped_column(String(30), default="pending")
+  eco_friendly: Mapped[bool] = mapped_column(Boolean, default=False)
+  use_leftovers: Mapped[bool] = mapped_column(Boolean, default=False)
+  notes: Mapped[str | None] = mapped_column(Text)
+  plan_id: Mapped[int | None] = mapped_column(ForeignKey("meal_plans.id", ondelete="SET NULL"), nullable=True)
+  created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+  updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+  started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+  completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+  events: Mapped[List["PlanningJobEvent"]] = relationship(
+    back_populates="job",
+    cascade="all, delete-orphan",
+    passive_deletes=True,
+  )
+
+
+class PlanningJobEvent(Base):
+  __tablename__ = "planning_job_events"
+
+  id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+  job_id: Mapped[int] = mapped_column(ForeignKey("planning_jobs.id", ondelete="CASCADE"), index=True)
+  stage: Mapped[str] = mapped_column(String(50))
+  message: Mapped[str] = mapped_column(String(255))
+  payload: Mapped[dict | list | None] = mapped_column(JSON)
+  created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+  job: Mapped[PlanningJob] = relationship(back_populates="events")

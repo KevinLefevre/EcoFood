@@ -121,6 +121,7 @@ def chef_plan_week(
   notes: Optional[str] = None,
   eco_friendly: bool = False,
   kitchen_tools: Optional[List[Dict[str, Any]]] = None,
+  days: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
   """
   Use Gemini to generate a 7-day (3 meals per day) plan with structured recipes.
@@ -147,9 +148,12 @@ def chef_plan_week(
   if notes:
     directives.append(f"Additional notes from the household: {notes.strip()}.")
 
+  target_days = days or DAY_LABELS
+  day_clause = ", ".join(target_days)
+
   prompt = f"""
-You are EcoFood's executive chef. Design a full week menu (Monday through Sunday)
-with BREAKFAST, LUNCH, and DINNER each day. You must output STRICT JSON following
+You are EcoFood's executive chef. Design menus for these days: {day_clause}.
+Each listed day must include BREAKFAST, LUNCH, and DINNER. You must output STRICT JSON following
 this schema:
 {{
   "plan": [
@@ -169,7 +173,7 @@ this schema:
 }}
 
 Constraints:
-- Exactly 21 meals (7 days × 3 meals) sorted by day then meal (Breakfast/Lunch/Dinner).
+- Exactly {len(target_days) * 3} meals (3 meals per listed day) sorted by day then meal (Breakfast/Lunch/Dinner).
 - Avoid dish repetition within the week.
 - Include at least one adventurous or unexpected element each day.
 - Keep instructions concise but descriptive enough to cook.
@@ -188,7 +192,7 @@ Return only JSON. No commentary.
 
   raw_text = response["text"]
   plan_data = _extract_plan_from_text(raw_text)
-  normalized_plan = _normalize_plan(plan_data)
+  normalized_plan = _normalize_plan(plan_data, target_days)
 
   return {
     "plan": normalized_plan,
@@ -212,7 +216,7 @@ def _extract_plan_from_text(text: str) -> List[Dict[str, Any]]:
   return plan
 
 
-def _normalize_plan(plan: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _normalize_plan(plan: List[Dict[str, Any]], target_days: List[str]) -> List[Dict[str, Any]]:
   normalized: List[Dict[str, Any]] = []
   day_map = {
     "monday": "Mon",
@@ -223,10 +227,14 @@ def _normalize_plan(plan: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     "saturday": "Sat",
     "sunday": "Sun",
   }
+  allowed_days = {day_map.get(day.strip().lower(), day[:3].title()) for day in target_days}
+
   for index, entry in enumerate(plan):
     day_value = entry.get("day") or DAY_LABELS[index // len(MEAL_SLOTS) % len(DAY_LABELS)]
     day_key = day_value.strip().lower()[:3]
     day = day_map.get(day_value.strip().lower(), day_map.get(day_key, DAY_LABELS[index // len(MEAL_SLOTS) % len(DAY_LABELS)]))
+    if allowed_days and day not in allowed_days:
+      continue
     meal_value = entry.get("meal") or MEAL_SLOTS[index % len(MEAL_SLOTS)]
     meal = meal_value.capitalize()
     if meal not in MEAL_SLOTS:
