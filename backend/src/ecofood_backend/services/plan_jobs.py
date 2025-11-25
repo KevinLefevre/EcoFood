@@ -16,6 +16,9 @@ async def create_job(
   week_start,
   eco_friendly: bool,
   use_leftovers: bool,
+  calories_per_person_default: int | None,
+  leftovers_text: str | None,
+  mood: int | None,
   notes: Optional[str],
 ) -> PlanningJob:
   job = PlanningJob(
@@ -23,6 +26,9 @@ async def create_job(
     week_start=week_start,
     eco_friendly=eco_friendly,
     use_leftovers=use_leftovers,
+    calories_per_person_default=calories_per_person_default,
+    leftovers_text=leftovers_text,
+    mood=mood,
     notes=notes,
     status="pending",
   )
@@ -87,7 +93,8 @@ async def add_event(
   message: str,
   payload: dict | list | None = None,
 ) -> PlanningJobEvent:
-  event = PlanningJobEvent(job_id=job_id, stage=stage, message=message, payload=payload)
+  safe_message = (message or "")[:2000]
+  event = PlanningJobEvent(job_id=job_id, stage=stage, message=safe_message, payload=payload)
   db.add(event)
   await db.commit()
   await db.refresh(event)

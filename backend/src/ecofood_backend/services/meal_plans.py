@@ -185,3 +185,17 @@ async def delete_plan_for_week(
   await db.delete(plan)
   await db.commit()
   return True
+  await db.commit()
+  return True
+
+
+async def update_plan_timeline(
+  db: AsyncSession,
+  plan_id: int,
+  timeline: List[Dict[str, Any]],
+) -> None:
+  result = await db.execute(select(MealPlan).where(MealPlan.id == plan_id))
+  plan = result.scalar_one_or_none()
+  if plan:
+    plan.timeline = timeline
+    await db.commit()

@@ -27,7 +27,7 @@ EcoFood orchestrates specialized agents using an Agent-to-Agent (A2A) workflow:
 
 - Sequential phase:
   1. **Household profiler** normalizes members/allergens/preferences.
-  2. **Meal architect** drafts a weekly plan via MCP tools (`recipes.search`, `plans.save-and-tag`).
+  2. **Meal architect** drafts a weekly plan via MCP tools (`recipes.search`, `plans.save-and-tag`). Optimized to generate full days (3 meals) in parallel batches.
 - Parallel phase:
   - **Nutrition reviewer** analyzes the draft via `nutrition.analyze`.
   - **Pantry reviewer** suggests leftover usage via `pantry.suggest-usage`.
@@ -60,12 +60,48 @@ graph TD
 1. Create a Gemini API key (from Google AI Studio or equivalent).
 2. Expose it to the app, for example via environment variable:
    - `GEMINI_API_KEY=your_gemini_key_here`
+- **Paid tier upgrade**: set `GEMINI_COMPLEX_TASK_MODEL=gemini-2.5-pro` (or another paid‑tier model) to lift the default rate limits and enable higher request throughput.
+- `LANGFUSE_PUBLIC_KEY=...` (optional)
+- `LANGFUSE_SECRET_KEY=...` (optional)
 3. (Optional) Create Langfuse keys if you want observability / analytics:
    - `LANGFUSE_PUBLIC_KEY=...`
    - `LANGFUSE_SECRET_KEY=...`
    - `LANGFUSE_BASE_URL=...` (points to the Langfuse UI; defaults to `http://localhost:3001` when self-hosted)
    - When running the bundled Langfuse stack add secrets for `LANGFUSE_NEXTAUTH_SECRET`, `LANGFUSE_ENCRYPTION_KEY`, and `LANGFUSE_SALT` in your `.env` file.
-4. (Optional) To self-host Langfuse locally, run `docker compose up` and visit `http://localhost:3100`. We currently run `langfuse/langfuse:2` plus a minimal Postgres service (`langfuse-db`). The compose file provides safe defaults for `NEXTAUTH_SECRET`, `SALT`, and `ENCRYPTION_KEY`, so you can get started without editing `.env`; when we need the full ingestion pipeline (ClickHouse, worker, etc.) we can switch back to the newer stack and override the `LANGFUSE_*` secrets.
+4. (Optional) To self-host Langfuse locally, run `docker compose up` and visit `http://localhost:3100`. We currently run `langfuse/langfuse:2` plus a minimal Postgres service (`langfuse-db`). The compose file provides safe defaults for `NEXTAUTH_SECRET`, `SALT`, and `ENCRYPTION_KEY`, so you can get started without editing `.env`; when we need the full ingestion pipeline (ClickHouse, worker, etc.) we can switch back to the newer stack and override the `LANGFUSE_*` secrets. After the DB starts, run the Prisma migrations once so Langfuse’s views exist:
+
+   ```bash
+   docker compose exec langfuse sh -c \
+     'cd /app && pnpm prisma migrate deploy --schema packages/shared/prisma/schema.prisma'
+   ```
+
+   (Answer `Y` the first time Corepack downloads pnpm.)
+
+   Example output from a successful run:
+
+   ```bash
+   kuku@Kulssigaming:~/projects/EcoFood$ docker compose exec langfuse sh -c \
+     'cd /app && pnpm prisma migrate deploy --schema packages/shared/prisma/schema.prisma'
+   ! Corepack is about to download https://registry.npmjs.org/pnpm/-/pnpm-9.5.0.tgz
+   ? Do you want to continue? [Y/n] Y
+
+   Prisma schema loaded from packages/shared/prisma/schema.prisma
+   Datasource "db": PostgreSQL database "langfuse", schema "public" at "langfuse-db:5432"
+
+   271 migrations found in prisma/migrations
+
+   
+   No pending migrations to apply.
+   kuku@Kulssigaming:~/projects/EcoFood$
+   ```
+
+   Recent Langfuse releases drop the lightweight Postgres-only views during later migrations, so recreate them after the command above:
+
+   ```bash
+   docker compose exec langfuse-db psql -U langfuse -d langfuse -f docker/langfuse/create_views.sql
+   ```
+
+   This installs `observations_view` and `traces_view`, which power the UI dashboards and Prisma aggregations.
 
 How you load these (e.g. `.env` file, secrets manager, or deployment config) depends on the stack you use; just ensure the app can read the variables above.
 

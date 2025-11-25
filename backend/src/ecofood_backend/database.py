@@ -26,7 +26,14 @@ class Base(DeclarativeBase):
   pass
 
 
-engine = create_async_engine(DATABASE_URL, echo=False, future=True)
+engine = create_async_engine(
+  DATABASE_URL,
+  echo=False,
+  future=True,
+  pool_size=20,
+  max_overflow=10,
+  pool_timeout=30,
+)
 AsyncSessionFactory = async_sessionmaker(engine, expire_on_commit=False)
 
 
@@ -42,6 +49,7 @@ async def init_db() -> None:
     await conn.run_sync(Base.metadata.create_all)
     await conn.run_sync(_ensure_meal_plan_entry_columns)
     await conn.run_sync(_ensure_household_member_columns)
+    await conn.run_sync(_ensure_planning_job_columns)
 
 
 def _ensure_meal_plan_entry_columns(sync_conn) -> None:
@@ -120,3 +128,38 @@ def _ensure_household_member_columns(sync_conn) -> None:
     sync_conn.execute(
       text("ALTER TABLE household_members ADD COLUMN meal_schedule JSON")
     )
+  if "calories_per_day" not in existing:
+    sync_conn.execute(
+      text("ALTER TABLE household_members ADD COLUMN calories_per_day INTEGER")
+    )
+
+
+def _ensure_planning_job_columns(sync_conn) -> None:
+  inspector = inspect(sync_conn)
+  if "planning_jobs" not in inspector.get_table_names():
+    return
+
+  existing = {column["name"] for column in inspector.get_columns("planning_jobs")}
+  dialect = sync_conn.dialect.name
+
+  def add_column(name: str, ddl_postgres: str, ddl_default: str) -> None:
+    if name in existing:
+      return
+    statement = ddl_postgres if dialect == "postgresql" else ddl_default
+    sync_conn.execute(text(statement))
+
+  add_column(
+    "calories_per_person_default",
+    "ALTER TABLE planning_jobs ADD COLUMN calories_per_person_default INTEGER",
+    "ALTER TABLE planning_jobs ADD COLUMN calories_per_person_default INTEGER",
+  )
+  add_column(
+    "leftovers_text",
+    "ALTER TABLE planning_jobs ADD COLUMN leftovers_text TEXT",
+    "ALTER TABLE planning_jobs ADD COLUMN leftovers_text TEXT",
+  )
+  add_column(
+    "mood",
+    "ALTER TABLE planning_jobs ADD COLUMN mood INTEGER",
+    "ALTER TABLE planning_jobs ADD COLUMN mood INTEGER",
+  )

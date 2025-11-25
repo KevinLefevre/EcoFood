@@ -14,9 +14,9 @@ from .agents import (
   NutritionReviewAgent,
   PantryReviewAgent,
   PlanSynthesisAgent,
-  run_parallel,
 )
 from .context import SessionContext
+from ...telemetry.langfuse import finish_trace, record_agent_span, start_trace
 
 
 @dataclass
@@ -31,6 +31,9 @@ class MealPlanRequest:
   eco_friendly: bool = False
   use_leftovers: bool = False
   days: Optional[List[str]] = None
+  calories_target: Optional[int] = None
+  leftover_notes: Optional[str] = None
+  mood: Optional[int] = None
 
 
 class MealPlanningWorkflow:
@@ -49,124 +52,177 @@ class MealPlanningWorkflow:
 
   async def generate(self, request: MealPlanRequest) -> Dict[str, Any]:
     ctx = SessionContext(session_id=request.session_id)
+    members_meta = [
+      {
+        "name": m.get("name"),
+        "role": m.get("role"),
+        "allergens": [a.get("name") for a in m.get("allergens", []) if isinstance(a, dict)],
+        "likes": [l.get("name") for l in m.get("likes", []) if isinstance(l, dict)],
+        "energy": m.get("energy"),
+        "calories_per_day": m.get("calories_per_day"),
+      }
+      for m in (request.members or [])
+    ]
+    tools_meta = [t.get("label") for t in (request.kitchen_tools or []) if t.get("label")]
+    trace_meta = {
+      "household_id": request.household_id,
+      "week_start": request.week_start.isoformat() if request.week_start else None,
+      "eco_friendly": request.eco_friendly,
+      "use_leftovers": request.use_leftovers,
+      "calories_target": request.calories_target,
+      "leftover_notes": request.leftover_notes,
+      "mood": request.mood,
+      "members": members_meta,
+      "kitchen_tools": tools_meta,
+      "pantry_items_count": len(request.pantry_items or []),
+      "notes": request.notes,
+    }
+    trace = start_trace(
+      trace_id=request.session_id,
+      name="meal-planning",
+      metadata=trace_meta,
+    )
 
-    # Sequential phase 1: household profiling.
-    household_inputs = self._describe_inputs(members=request.members)
-    self._logger.info("[Workflow] %s input=%s", self.household_agent.name, household_inputs)
-    profile_timer = time.perf_counter()
-    profile_result = await self.household_agent.run(ctx, members=request.members)
-    self._log_agent(profile_result, time.perf_counter() - profile_timer, household_inputs)
-    ctx.set("kitchen_tools", request.kitchen_tools)
+    try:
+      # Sequential phase 1: household profiling.
+      household_inputs = self._describe_inputs(members=request.members)
+      self._logger.info("[Workflow] %s input=%s", self.household_agent.name, household_inputs)
+      profile_timer = time.perf_counter()
+      profile_result = await self.household_agent.run(ctx, members=request.members)
+      self._log_agent(profile_result, time.perf_counter() - profile_timer, household_inputs, trace)
+      ctx.set("kitchen_tools", request.kitchen_tools)
 
-    # Sequential phase 2: plan architect uses the profile.
-    architect_inputs = self._describe_inputs(
-      profile=profile_result.payload["profile"],
-      notes=request.notes,
-      eco_friendly=request.eco_friendly,
-      kitchen_tools=request.kitchen_tools,
-      days=request.days,
-    )
-    self._logger.info("[Workflow] %s input=%s", self.architect_agent.name, architect_inputs)
-    architect_timer = time.perf_counter()
-    plan_result = await self.architect_agent.run(
-      ctx,
-      profile=profile_result.payload["profile"],
-      notes=request.notes,
-      eco_friendly=request.eco_friendly,
-      kitchen_tools=request.kitchen_tools,
-      days=request.days,
-    )
-    self._log_agent(plan_result, time.perf_counter() - architect_timer, architect_inputs)
-
-    chef_inputs = self._describe_inputs(
-      plan=plan_result.payload["plan"],
-      profile=profile_result.payload["profile"],
-      notes=request.notes,
-    )
-    self._logger.info("[Workflow] %s input=%s", self.chef_agent.name, chef_inputs)
-    chef_timer = time.perf_counter()
-    chef_result = await self.chef_agent.run(
-      ctx,
-      plan=plan_result.payload["plan"],
-      profile=profile_result.payload["profile"],
-      notes=request.notes,
-    )
-    self._log_agent(chef_result, time.perf_counter() - chef_timer, chef_inputs)
-
-    plan_items = chef_result.payload["plan"]
-
-    # Parallel phase: nutrition + pantry reviewers evaluate the same plan.
-    nutrition_inputs = self._describe_inputs(plan=plan_items)
-    self._logger.info("[Workflow] %s input=%s", self.nutrition_agent.name, nutrition_inputs)
-    nutrition_task = asyncio.create_task(
-      self.nutrition_agent.run(ctx, plan=plan_items)
-    )
-    pantry_inputs = self._describe_inputs(
-      soon_expiring=request.pantry_items,
-      plan=plan_items,
-      use_leftovers=request.use_leftovers,
-    )
-    self._logger.info("[Workflow] %s input=%s", self.pantry_agent.name, pantry_inputs)
-    pantry_task = asyncio.create_task(
-      self.pantry_agent.run(
+      # Sequential phase 2: plan architect uses the profile.
+      architect_inputs = self._describe_inputs(
+        profile=profile_result.payload["profile"],
+        notes=request.notes,
+        eco_friendly=request.eco_friendly,
+        kitchen_tools=request.kitchen_tools,
+        days=request.days,
+        mood=request.mood,
+      )
+      self._logger.info("[Workflow] %s input=%s", self.architect_agent.name, architect_inputs)
+      architect_timer = time.perf_counter()
+      plan_result = await self.architect_agent.run(
         ctx,
+        profile=profile_result.payload["profile"],
+        notes=request.notes,
+        eco_friendly=request.eco_friendly,
+        kitchen_tools=request.kitchen_tools,
+        days=request.days,
+        calories_target=request.calories_target,
+        leftover_notes=request.leftover_notes,
+        mood=request.mood,
+      )
+      self._log_agent(plan_result, time.perf_counter() - architect_timer, architect_inputs, trace)
+
+      chef_inputs = self._describe_inputs(
+        plan=plan_result.payload["plan"],
+        profile=profile_result.payload["profile"],
+        notes=request.notes,
+        calories_target=request.calories_target,
+        leftover_notes=request.leftover_notes,
+        mood=request.mood,
+      )
+      self._logger.info("[Workflow] %s input=%s", self.chef_agent.name, chef_inputs)
+      chef_timer = time.perf_counter()
+      chef_result = await self.chef_agent.run(
+        ctx,
+        plan=plan_result.payload["plan"],
+        profile=profile_result.payload["profile"],
+        notes=request.notes,
+      )
+      self._log_agent(chef_result, time.perf_counter() - chef_timer, chef_inputs, trace)
+
+      plan_items = chef_result.payload["plan"]
+
+      # Parallel phase: nutrition + pantry reviewers evaluate the same plan.
+      nutrition_inputs = self._describe_inputs(plan=plan_items)
+      self._logger.info("[Workflow] %s input=%s", self.nutrition_agent.name, nutrition_inputs)
+      pantry_inputs = self._describe_inputs(
         soon_expiring=request.pantry_items,
         plan=plan_items,
         use_leftovers=request.use_leftovers,
       )
-    )
-    review_results = await run_parallel(nutrition_task, pantry_task)
-    for review in review_results:
-      self._log_agent(
-        review,
-        0.0,
-        nutrition_inputs if review.agent == self.nutrition_agent.name else pantry_inputs,
+      self._logger.info("[Workflow] %s input=%s", self.pantry_agent.name, pantry_inputs)
+
+      async with asyncio.TaskGroup() as tg:
+        nutrition_task = tg.create_task(
+          self.nutrition_agent.run(ctx, plan=plan_items)
+        )
+        pantry_task = tg.create_task(
+          self.pantry_agent.run(
+            ctx,
+            soon_expiring=request.pantry_items,
+            plan=plan_items,
+            use_leftovers=request.use_leftovers,
+          )
+        )
+      
+      review_results = [nutrition_task.result(), pantry_task.result()]
+      for review in review_results:
+        self._log_agent(
+          review,
+          0.0,
+          nutrition_inputs if review.agent == self.nutrition_agent.name else pantry_inputs,
+          trace,
+        )
+
+      nutrition_payload = next(
+        res.payload for res in review_results if res.stage == "plan.review.nutrition"
+      )
+      pantry_payload = next(
+        res.payload for res in review_results if res.stage == "plan.review.pantry"
       )
 
-    nutrition_payload = next(
-      res.payload for res in review_results if res.stage == "plan.review.nutrition"
-    )
-    pantry_payload = next(
-      res.payload for res in review_results if res.stage == "plan.review.pantry"
-    )
+      # Sequential phase 3: synthesis agent merges everything.
+      synthesis_inputs = self._describe_inputs(
+        plan=plan_items,
+        nutrition_review=nutrition_payload["analysis"],
+        pantry_review=pantry_payload,
+      )
+      self._logger.info("[Workflow] %s input=%s", self.synthesis_agent.name, synthesis_inputs)
+      synthesis_timer = time.perf_counter()
+      final_result = await self.synthesis_agent.run(
+        ctx,
+        plan=plan_items,
+        nutrition_review=nutrition_payload["analysis"],
+        pantry_review=pantry_payload,
+      )
+      self._log_agent(final_result, time.perf_counter() - synthesis_timer, synthesis_inputs, trace)
 
-    # Sequential phase 3: synthesis agent merges everything.
-    synthesis_inputs = self._describe_inputs(
-      plan=plan_items,
-      nutrition_review=nutrition_payload["analysis"],
-      pantry_review=pantry_payload,
-    )
-    self._logger.info("[Workflow] %s input=%s", self.synthesis_agent.name, synthesis_inputs)
-    synthesis_timer = time.perf_counter()
-    final_result = await self.synthesis_agent.run(
-      ctx,
-      plan=plan_items,
-      nutrition_review=nutrition_payload["analysis"],
-      pantry_review=pantry_payload,
-    )
-    self._log_agent(final_result, time.perf_counter() - synthesis_timer, synthesis_inputs)
+      result = {
+        "session_id": request.session_id,
+        "timeline": [
+          profile_result.__dict__,
+          plan_result.__dict__,
+          chef_result.__dict__,
+          *[res.__dict__ for res in review_results],
+          final_result.__dict__,
+        ],
+        "final_plan": final_result.payload,
+        "context": ctx.snapshot(),
+        "options": {
+          "household_id": request.household_id,
+          "week_start": request.week_start.isoformat() if request.week_start else None,
+          "eco_friendly": request.eco_friendly,
+          "use_leftovers": request.use_leftovers,
+          "notes": request.notes,
+        },
+      }
+      finish_trace(trace, status="success", output=result["final_plan"])
+      return result
+    except Exception as exc:
+      finish_trace(trace, status="error", output={"error": str(exc)})
+      raise
 
-    return {
-      "session_id": request.session_id,
-      "timeline": [
-        profile_result.__dict__,
-        plan_result.__dict__,
-        chef_result.__dict__,
-        *[res.__dict__ for res in review_results],
-        final_result.__dict__,
-      ],
-      "final_plan": final_result.payload,
-      "context": ctx.snapshot(),
-      "options": {
-        "household_id": request.household_id,
-        "week_start": request.week_start.isoformat() if request.week_start else None,
-        "eco_friendly": request.eco_friendly,
-        "use_leftovers": request.use_leftovers,
-        "notes": request.notes,
-      },
-    }
-
-  def _log_agent(self, result: AgentResult, elapsed: float, inputs_summary: str | None = None) -> None:
+  def _log_agent(
+    self,
+    result: AgentResult,
+    elapsed: float,
+    inputs_summary: str | None,
+    trace,
+  ) -> None:
     payload_keys = ",".join(sorted(result.payload.keys())) if isinstance(result.payload, dict) else "payload"
     extra_details = ""
     if result.stage == "plan.candidate" and isinstance(result.payload, dict):
@@ -187,6 +243,14 @@ class MealPlanningWorkflow:
       inputs_summary or "-",
       payload_keys,
       extra_details,
+    )
+    record_agent_span(
+      trace,
+      name=result.agent,
+      stage=result.stage,
+      inputs=inputs_summary or "-",
+      output_keys=payload_keys,
+      elapsed=elapsed,
     )
 
   def _describe_inputs(self, **kwargs: Any) -> str:

@@ -198,13 +198,17 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
   const [planLoading, setPlanLoading] = useState(false);
   const [plannerBusy, setPlannerBusy] = useState(false);
   const [ecoFriendly, setEcoFriendly] = useState(false);
-  const [useLeftovers, setUseLeftovers] = useState(true);
+  const [useLeftovers, setUseLeftovers] = useState(false);
   const [notes, setNotes] = useState('');
+  const [mood, setMood] = useState<number>(50); // 0 comfort, 100 healthy
+  const [leftoverText, setLeftoverText] = useState('');
+  const [showLeftoverInput, setShowLeftoverInput] = useState(false);
   const [timeline, setTimeline] = useState<AgentTimelineEvent[]>([]);
   const [sessionViewerOpen, setSessionViewerOpen] = useState(false);
   const [agentBriefOpen, setAgentBriefOpen] = useState(false);
   const [shoppingModalOpen, setShoppingModalOpen] = useState(false);
   const [planningOverlayOpen, setPlanningOverlayOpen] = useState(false);
+  const [planningSlots, setPlanningSlots] = useState<Record<string, 'pending' | 'done'>>({});
   const [planningMessages, setPlanningMessages] = useState<string[]>([]);
   const [activePlanJobId, setActivePlanJobId] = useState<number | null>(null);
   const [currentPlanningDay, setCurrentPlanningDay] = useState<string | null>(null);
@@ -283,6 +287,10 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
     });
     return map;
   }, [plan]);
+
+  const planningFlagsBySlot = useMemo(() => {
+    return planningSlots;
+  }, [planningSlots]);
   const shoppingList = useMemo(() => {
     const finalEvent = timeline.find(
       (event) => event.stage === 'plan.final' || event.agent === 'plan-synthesizer'
@@ -431,6 +439,14 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
     []
   );
 
+  const handleLeftoversToggle = (checked: boolean) => {
+    setUseLeftovers(checked);
+    setShowLeftoverInput(checked);
+    if (!checked) {
+      setLeftoverText('');
+    }
+  };
+
   useEffect(() => {
     const label = weekRangeLabel(currentWeekStart);
     setPlannerMessages([
@@ -447,12 +463,15 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
   useEffect(() => {
     if (useLeftovers && !leftoversPromptedRef.current) {
       leftoversPromptedRef.current = true;
+      setShowLeftoverInput(true);
       appendPlannerMessage(
         'agent',
-        'Since we want to save waste, list any leftovers or ingredients expiring soon so I can push them to the agents.'
+        'List leftovers or expiring ingredients to prioritize.'
       );
     } else if (!useLeftovers) {
       leftoversPromptedRef.current = false;
+      setShowLeftoverInput(false);
+      setLeftoverText('');
     }
   }, [useLeftovers, appendPlannerMessage]);
 
@@ -546,7 +565,7 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
         <input
           type="checkbox"
           checked={useLeftovers}
-          onChange={(event) => setUseLeftovers(event.target.checked)}
+          onChange={(event) => handleLeftoversToggle(event.target.checked)}
           className="mt-1 h-4 w-4 rounded border-slate-700 bg-slate-950 text-emerald-400 focus:ring-emerald-400"
         />
         <span>
@@ -557,6 +576,39 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
           </span>
         </span>
       </label>
+      {showLeftoverInput && (
+        <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-3">
+          <label className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-200">
+            Leftovers / ingredients to include
+          </label>
+          <textarea
+            value={leftoverText}
+            onChange={(event) => setLeftoverText(event.target.value)}
+            rows={3}
+            placeholder="Ex: roasted veggies, tofu, spinach about to expire."
+            className="mt-2 w-full rounded-2xl border border-emerald-500/40 bg-slate-950/80 px-3 py-2 text-sm text-slate-100 focus:border-emerald-400 focus:outline-none"
+          />
+        </div>
+      )}
+      <div className="space-y-1">
+        <label className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+          Week mood (Comfort ⟷ Healthy)
+        </label>
+        <div className="flex items-center gap-3">
+          <span className="text-[0.7rem] text-slate-500">Comfort</span>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={5}
+            value={mood}
+            onChange={(event) => setMood(Number(event.target.value))}
+            className="flex-1 accent-cyan-400"
+          />
+          <span className="text-[0.7rem] text-slate-500">Healthy</span>
+          <span className="text-xs text-slate-300">{mood}</span>
+        </div>
+      </div>
       <div>
         <label className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
           Notes to agents
@@ -643,6 +695,7 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
         setTimeline(Array.isArray(data.timeline) ? data.timeline : []);
         setEcoFriendly(data.eco_friendly);
         setUseLeftovers(data.use_leftovers);
+        setShowLeftoverInput(data.use_leftovers);
         setNotes(data.notes ?? '');
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load plan');
@@ -661,7 +714,7 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
       );
       planJobSourceRef.current = source;
       setActivePlanJobId(jobId);
-      setPlanningOverlayOpen(true);
+      setPlanningOverlayOpen(false);
       setPlanningError(null);
       if (!resume) {
         setPlanningMessages([`Job #${jobId} queued`]);
@@ -678,9 +731,13 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
           }
           if (payload.stage === 'planning' && typeof payload.payload?.day === 'string') {
             setCurrentPlanningDay(payload.payload.day);
+            const slotKey = `${payload.payload.day}-${payload.payload.slot ?? ''}`;
+            setPlanningSlots((prev) => ({ ...prev, [slotKey]: 'pending' }));
           }
           if (payload.stage === 'planned') {
             setCurrentPlanningDay(null);
+            const slotKey = `${payload.payload?.day ?? ''}-${payload.payload?.slot ?? ''}`;
+            setPlanningSlots((prev) => ({ ...prev, [slotKey]: 'done' }));
           }
           if (payload.payload?.entries) {
             applyPartialEntries(payload.payload.entries as MealPlanEntry[]);
@@ -785,6 +842,7 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
     setPlanningError(null);
     setCurrentPlanningDay(null);
     setActivePlanJobId(null);
+    setPlanningSlots({});
     setPlannerBusy(true);
     setMessage('Agents are crafting the week...');
     try {
@@ -796,7 +854,9 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
           week_start: currentWeekStart,
           eco_friendly: ecoFriendly,
           use_leftovers: useLeftovers,
-          notes
+          notes,
+          leftovers_text: leftoverText || null,
+          mood
         })
       });
       if (!res.ok) {
@@ -1153,6 +1213,7 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
                       attendanceInfo && attendanceInfo.servings > 0
                         ? `${attendanceInfo.servings} serving${attendanceInfo.servings === 1 ? '' : 's'}`
                         : '';
+                    const slotStatus = planningFlagsBySlot[`${day}-${slot}`];
                     return (
                       <div
                         key={`${day}-${slot}`}
@@ -1165,13 +1226,18 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
                             openMealViewer(day, slot);
                           }
                         }}
-                        className={`rounded-2xl border border-slate-800/70 bg-slate-900/70 p-2 text-[0.65rem] text-slate-200 transition-colors ${
+                        className={`relative rounded-2xl border border-slate-800/70 bg-slate-900/70 p-2 text-[0.65rem] text-slate-200 transition-colors ${
                           hasEntry
                             ? 'cursor-pointer hover:border-cyan-400/50'
                             : 'cursor-pointer opacity-70 hover:border-slate-700'
                         }`}
                       >
-                        <p className="line-clamp-2 font-semibold text-slate-100">
+                        {slotStatus === 'pending' && (
+                          <span className="absolute right-1 top-1 inline-flex h-4 w-4 items-center justify-center">
+                            <span className="h-3 w-3 animate-spin rounded-full border-2 border-cyan-300 border-t-transparent" />
+                          </span>
+                        )}
+                        <p className="line-clamp-2 pr-5 font-semibold text-slate-100">
                           {entry?.title ?? 'Empty slot'}
                         </p>
                         {attendanceInfo && (
@@ -2222,6 +2288,7 @@ type Member = {
   likes: string[];
   meal_schedule?: MemberMealSchedule | null;
   meals: string[];
+  calories_per_day?: number | null;
 };
 
 type KitchenTool = {
@@ -2268,6 +2335,7 @@ function HouseholdTab({ apiBaseUrl }: HouseholdTabProps) {
   const [role, setRole] = useState<string>('Adult');
   const [allergensInput, setAllergensInput] = useState('');
   const [likesInput, setLikesInput] = useState('');
+  const [caloriesInput, setCaloriesInput] = useState<string>('2000');
 
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantStage, setAssistantStage] = useState('');
@@ -2363,7 +2431,8 @@ function HouseholdTab({ apiBaseUrl }: HouseholdTabProps) {
         likes: likesInput
           .split(',')
           .map((label) => label.trim())
-          .filter(Boolean)
+          .filter(Boolean),
+        calories_per_day: caloriesInput ? Number(caloriesInput) : null
       };
       const res = await fetch(
         `${apiBaseUrl}/households/${selectedHousehold.id}/members`,
@@ -2380,6 +2449,7 @@ function HouseholdTab({ apiBaseUrl }: HouseholdTabProps) {
       setRole('Adult');
       setAllergensInput('');
       setLikesInput('');
+      setCaloriesInput('2000');
       await fetchHouseholds();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add member');
@@ -2778,6 +2848,11 @@ function HouseholdTab({ apiBaseUrl }: HouseholdTabProps) {
                     <p className="text-[0.7rem] uppercase tracking-[0.2em] text-slate-500">
                       {member.role}
                     </p>
+                    {member.calories_per_day ? (
+                      <p className="text-xs text-slate-400">
+                        ~{member.calories_per_day} kcal/day target
+                      </p>
+                    ) : null}
                   </div>
                   <div className="flex gap-2">
                     <button
@@ -2915,6 +2990,22 @@ function HouseholdTab({ apiBaseUrl }: HouseholdTabProps) {
                 onChange={(e) => setLikesInput(e.target.value)}
                 placeholder="e.g. Mediterranean, spicy"
                 className="w-full rounded-xl border border-slate-700 bg-slate-950/80 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[0.7rem] font-medium uppercase tracking-[0.18em] text-slate-500">
+                Daily calories target (per person)
+              </label>
+              <input
+                type="number"
+                min={800}
+                max={4000}
+                step={50}
+                value={caloriesInput}
+                onChange={(e) => setCaloriesInput(e.target.value)}
+                placeholder="e.g. 2100"
+                className="w-full rounded-xl border border-slate-700 bg-slate-950/80 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-400"
               />
             </div>
 

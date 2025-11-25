@@ -50,6 +50,7 @@ class HouseholdMember(Base):
   eats_lunch: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
   eats_dinner: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
   meal_schedule: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+  calories_per_day: Mapped[int | None] = mapped_column(Integer)
 
   household: Mapped[Household] = relationship(back_populates="members")
   allergens: Mapped[List["MemberAllergen"]] = relationship(
@@ -158,6 +159,9 @@ class PlanningJob(Base):
   status: Mapped[str] = mapped_column(String(30), default="pending")
   eco_friendly: Mapped[bool] = mapped_column(Boolean, default=False)
   use_leftovers: Mapped[bool] = mapped_column(Boolean, default=False)
+  calories_per_person_default: Mapped[int | None] = mapped_column(Integer)
+  leftovers_text: Mapped[str | None] = mapped_column(Text)
+  mood: Mapped[int | None] = mapped_column(Integer)  # 0 (comfort) .. 100 (healthy)
   notes: Mapped[str | None] = mapped_column(Text)
   plan_id: Mapped[int | None] = mapped_column(ForeignKey("meal_plans.id", ondelete="SET NULL"), nullable=True)
   created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -178,7 +182,7 @@ class PlanningJobEvent(Base):
   id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
   job_id: Mapped[int] = mapped_column(ForeignKey("planning_jobs.id", ondelete="CASCADE"), index=True)
   stage: Mapped[str] = mapped_column(String(50))
-  message: Mapped[str] = mapped_column(String(255))
+  message: Mapped[str] = mapped_column(Text)
   payload: Mapped[dict | list | None] = mapped_column(JSON)
   created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

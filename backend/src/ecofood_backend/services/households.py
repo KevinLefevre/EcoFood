@@ -90,6 +90,7 @@ async def _create_member(db: AsyncSession, household_id: int, payload: MemberCre
     household_id=household_id,
     name=payload.name,
     role=payload.role,
+    calories_per_day=payload.calories_per_day,
     **_meals_to_flags(payload.meals),
     meal_schedule=_normalize_schedule(payload.meal_schedule),
   )
@@ -140,6 +141,7 @@ async def _to_member_response(db: AsyncSession, member: HouseholdMember) -> Memb
     "likes": [p.label for p in member.preferences],
     "meals": _flags_to_meals(member),
     "meal_schedule": member.meal_schedule,
+    "calories_per_day": member.calories_per_day,
   }
   return MemberResponse(**data)
 

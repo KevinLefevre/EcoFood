@@ -5,6 +5,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# Force cache invalidation for code changes
+ENV CACHE_BUST=1
+
 # Install Node.js & npm so the Next.js web app can run in the same container.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends nodejs npm \

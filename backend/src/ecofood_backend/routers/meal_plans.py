@@ -116,6 +116,9 @@ async def create_week_plan(
     week_start=payload.week_start,
     eco_friendly=payload.eco_friendly,
     use_leftovers=payload.use_leftovers,
+    calories_target=payload.calories_per_person_default,
+    leftover_notes=payload.leftovers_text,
+    mood=payload.mood,
   )
   workflow_result = await workflow.generate(workflow_request)
 

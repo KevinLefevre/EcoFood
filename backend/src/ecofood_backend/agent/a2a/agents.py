@@ -7,6 +7,7 @@ import logging
 from typing import Any, Dict, List, Literal, Optional, Set
 
 from ..tools.mcp import get_tool_set
+from ..cache import profile_cache
 from .context import SessionContext
 
 
@@ -42,7 +43,14 @@ class HouseholdProfilerAgent(BaseAgent):
     self._profile = tools["household.profile"]
 
   async def run(self, ctx: SessionContext, members: List[Dict[str, Any]]) -> AgentResult:
-    profile = self._profile(members)
+    cached = profile_cache.get(members)
+    if cached:
+      logger.info("[HouseholdProfiler] Using cached profile")
+      profile = cached
+    else:
+      profile = self._profile(members)
+      profile_cache.set(members, profile)
+      
     ctx.set("household_profile", profile)
     return AgentResult(self.name, "profile.ready", {"profile": profile})
 
@@ -64,6 +72,9 @@ class MealArchitectAgent(BaseAgent):
     eco_friendly: bool = False,
     kitchen_tools: Optional[List[Dict[str, Any]]] = None,
     days: Optional[List[str]] = None,
+    calories_target: Optional[int] = None,
+    leftover_notes: Optional[str] = None,
+    mood: Optional[int] = None,
   ) -> AgentResult:
     if self._llm_plan is None:
       raise RuntimeError(
@@ -71,12 +82,15 @@ class MealArchitectAgent(BaseAgent):
       )
 
     try:
-      llm_payload = self._llm_plan(
+      llm_payload = await self._llm_plan(
         profile=profile,
         notes=notes,
         eco_friendly=eco_friendly,
         kitchen_tools=kitchen_tools,
         days=days,
+        calories_target=calories_target,
+        leftover_notes=leftover_notes,
+        mood=mood,
       )
     except Exception as exc:  # pragma: no cover - ensure visibility
       raise RuntimeError(f"Gemini menu generation failed: {exc}") from exc
@@ -221,14 +235,12 @@ class PlanSynthesisAgent(BaseAgent):
 
     plan_items = []
     for item in plan:
-      ingredient_lines = [
-        format_ingredient(ingredient)
-        for ingredient in item.get("ingredients", [])
-        if isinstance(ingredient, dict)
+      # Pass raw ingredients for better aggregation
+      raw_ingredients = [
+        ing for ing in item.get("ingredients", [])
+        if isinstance(ing, dict)
       ]
-      if not ingredient_lines and item.get("summary"):
-        ingredient_lines = [item["summary"]]
-      plan_items.append({"name": item["title"], "ingredients": ingredient_lines})
+      plan_items.append({"name": item["title"], "ingredients": raw_ingredients})
     shopping = self._shopping(plan_items)
 
     events = [
@@ -257,8 +269,3 @@ class PlanSynthesisAgent(BaseAgent):
 
     ctx.set("final_plan", final_plan)
     return AgentResult(self.name, "plan.final", final_plan)
-
-
-async def run_parallel(*tasks: "asyncio.Task[AgentResult]") -> List[AgentResult]:
-  results = await asyncio.gather(*tasks)
-  return list(results)

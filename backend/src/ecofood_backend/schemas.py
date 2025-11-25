@@ -18,6 +18,7 @@ class MemberBase(BaseModel):
   likes: List[str] = Field(default_factory=list)
   meals: List[str] = Field(default_factory=lambda: list(DEFAULT_MEMBER_MEALS))
   meal_schedule: Optional[MealSchedule] = None
+  calories_per_day: Optional[int] = None
 
 
 class MemberCreate(MemberBase):
@@ -111,6 +112,9 @@ class PlanWeekRequest(BaseModel):
   week_start: date
   eco_friendly: bool = False
   use_leftovers: bool = False
+  calories_per_person_default: Optional[int] = None
+  leftovers_text: Optional[str] = None
+  mood: Optional[int] = Field(default=None, ge=0, le=100)
   notes: Optional[str] = None
 
 
@@ -161,6 +165,9 @@ class PlanningJobCreate(BaseModel):
   week_start: date
   eco_friendly: bool = False
   use_leftovers: bool = False
+  calories_per_person_default: Optional[int] = None
+  leftovers_text: Optional[str] = None
+  mood: Optional[int] = Field(default=None, ge=0, le=100)
   notes: Optional[str] = None
 
 
@@ -171,6 +178,9 @@ class PlanningJobResponse(BaseModel):
   status: str
   eco_friendly: bool
   use_leftovers: bool
+  calories_per_person_default: Optional[int] = None
+  leftovers_text: Optional[str] = None
+  mood: Optional[int] = None
   notes: Optional[str] = None
   plan_id: Optional[int] = None
   created_at: datetime

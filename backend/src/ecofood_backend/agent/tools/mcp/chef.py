@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
+import os
 import re
 from typing import Any, Dict, List, Optional
 
-from ...clients.gemini import GeminiClientError, generate_text
+from ...clients.gemini import GeminiClientError, generate_text_async
+
+logger = logging.getLogger(__name__)
 
 CULINARY_THEMES = [
   "Garden-to-table",
@@ -116,15 +121,21 @@ def chef_build_menu(
   }
 
 
-def chef_plan_week(
+async def chef_plan_week(
   profile: Dict[str, Any],
   notes: Optional[str] = None,
   eco_friendly: bool = False,
   kitchen_tools: Optional[List[Dict[str, Any]]] = None,
   days: Optional[List[str]] = None,
+  calories_target: Optional[int] = None,
+  leftover_notes: Optional[str] = None,
+  mood: Optional[int] = None,
+  pantry_items: Optional[List[Dict[str, Any]]] = None,
+  debug_return: bool = False,
 ) -> Dict[str, Any]:
   """
-  Use Gemini to generate a 7-day (3 meals per day) plan with structured recipes.
+  Use Gemini to generate per-slot meals across the week (one meal per call).
+  Runs all day/meal slots in parallel.
   """
 
   likes = ", ".join(like["name"] for like in profile.get("top_likes", []) if like.get("name"))
@@ -133,90 +144,436 @@ def chef_plan_week(
     tool["label"] for tool in (kitchen_tools or []) if tool.get("label") and tool.get("quantity", 0)
   )
 
-  directives = [
-    "Avoid repeating the same primary dish twice in the week.",
-    "Use varied cuisines and textures to keep meals interesting.",
-  ]
-  if likes:
-    directives.append(f"Lean into household favorites: {likes}.")
-  if eco_friendly:
-    directives.append("Prioritize plant-forward or low-impact proteins.")
-  if allergens:
-    directives.append(f"Never include allergens: {allergens}.")
-  if tool_labels:
-    directives.append(f"Prefer cookware available: {tool_labels}.")
-  if notes:
-    directives.append(f"Additional notes from the household: {notes.strip()}.")
-
   target_days = days or DAY_LABELS
-  day_clause = ", ".join(target_days)
+  meal_prompts: Dict[str, str] = {}
+  meal_raw: Dict[str, str] = {}
+  meal_finish: Dict[str, Any] = {}
+  errors: Dict[str, str] = {}
+  combined_plan: List[Dict[str, Any]] = []
 
-  prompt = f"""
-You are EcoFood's executive chef. Design menus for these days: {day_clause}.
-Each listed day must include BREAKFAST, LUNCH, and DINNER. You must output STRICT JSON following
-this schema:
+  def build_day_prompt(day: str) -> str:
+    attendees_lines = []
+    for member in profile.get("members", []):
+      member_likes = []
+      for like in member.get("likes", []):
+        if isinstance(like, dict) and like.get("name"):
+          member_likes.append(like["name"])
+        elif isinstance(like, str):
+          member_likes.append(like)
+      member_allergens = []
+      for allergen in member.get("allergens", []):
+        if isinstance(allergen, dict) and allergen.get("name"):
+          member_allergens.append(allergen["name"])
+        elif isinstance(allergen, str):
+          member_allergens.append(allergen)
+
+      attendees_lines.append(
+        f"{member.get('name','Guest')} ({member.get('role','')}) "
+        f"likes={','.join(member_likes) if member_likes else 'none'} "
+        f"allergens={','.join(member_allergens) if member_allergens else 'none'} "
+        f"energy_level={member.get('energy','medium')}"
+      )
+    attendees_text = "\n- ".join(attendees_lines) if attendees_lines else "None listed"
+
+    tools_available = [
+      tool["label"] for tool in (kitchen_tools or []) if tool.get("label") and tool.get("quantity", 0)
+    ]
+    tools_list = tools_available or ["Standard kitchen basics"]
+
+    example_one = """
+{
+  "plan": [
+    {
+      "day": "Mon",
+      "meal": "Breakfast",
+      "title": "Savory Oatmeal with Greens",
+      "summary": "Hearty oats with sautéed greens and a poached egg.",
+      "ingredients": [
+        {"name": "Rolled oats", "quantity": "80", "unit": "g", "notes": null},
+        {"name": "Spinach", "quantity": "60", "unit": "g", "notes": "washed"},
+        {"name": "Egg", "quantity": "1", "unit": "pc", "notes": "poached"},
+        {"name": "Olive oil", "quantity": "1", "unit": "tbsp", "notes": null}
+      ],
+      "steps": [
+        "Simmer oats in water until creamy.",
+        "Sauté spinach in olive oil until wilted.",
+        "Poach the egg.",
+        "Assemble oats, top with spinach and egg. Season to taste."
+      ],
+      "prep_minutes": 5,
+      "cook_minutes": 10,
+      "calories_per_person": 450,
+      "required_tools": ["pot", "pan"]
+    },
+    {
+      "day": "Mon",
+      "meal": "Lunch",
+      "title": "Chickpea & Roasted Pepper Grain Bowl",
+      "summary": "Protein-rich bowl with roasted peppers, chickpeas, and herbed yogurt.",
+      "ingredients": [
+        {"name": "Cooked brown rice", "quantity": "200", "unit": "g", "notes": "warm"},
+        {"name": "Chickpeas", "quantity": "240", "unit": "g can", "notes": "drained, rinsed"},
+        {"name": "Red bell pepper", "quantity": "1", "unit": "pc", "notes": "sliced"},
+        {"name": "Zucchini", "quantity": "1", "unit": "pc", "notes": "sliced"},
+        {"name": "Olive oil", "quantity": "2", "unit": "tbsp", "notes": null},
+        {"name": "Greek yogurt", "quantity": "120", "unit": "g", "notes": "or dairy-free yogurt"},
+        {"name": "Lemon", "quantity": "0.5", "unit": "pc", "notes": "juiced"},
+        {"name": "Mint", "quantity": "1", "unit": "tbsp", "notes": "chopped"},
+        {"name": "Cumin", "quantity": "0.5", "unit": "tsp", "notes": null},
+        {"name": "Salt", "quantity": null, "unit": null, "notes": "to taste"},
+        {"name": "Black pepper", "quantity": null, "unit": null, "notes": "to taste"}
+      ],
+      "steps": [
+        "Roast peppers and zucchini with olive oil, salt, pepper, and cumin at 200°C for 15-18 minutes.",
+        "Warm chickpeas in a pan with a pinch of salt and pepper.",
+        "Stir yogurt with lemon juice and mint to make a sauce.",
+        "Assemble bowls with warm rice, roasted vegetables, chickpeas, and drizzle with the herbed yogurt."
+      ],
+      "prep_minutes": 10,
+      "cook_minutes": 20,
+      "calories_per_person": 520,
+      "required_tools": ["oven", "sheet pan", "small pan", "mixing bowl"]
+    },
+    {
+      "day": "Mon",
+      "meal": "Dinner",
+      "title": "Roasted Lemon-Herb Chicken & Vegetables",
+      "summary": "Sheet-pan chicken with potatoes and carrots finished with a bright herb dressing.",
+      "ingredients": [
+        {"name": "Chicken thighs", "quantity": "500", "unit": "g", "notes": "bone-in, skin-on"},
+        {"name": "Potatoes", "quantity": "400", "unit": "g", "notes": "cut into 2cm chunks"},
+        {"name": "Carrots", "quantity": "200", "unit": "g", "notes": "sliced into batons"},
+        {"name": "Olive oil", "quantity": "2", "unit": "tbsp", "notes": null},
+        {"name": "Garlic", "quantity": "3", "unit": "cloves", "notes": "minced"},
+        {"name": "Lemon", "quantity": "1", "unit": "pc", "notes": "zest and juice"},
+        {"name": "Parsley", "quantity": "2", "unit": "tbsp", "notes": "chopped"},
+        {"name": "Salt", "quantity": null, "unit": null, "notes": "to taste"},
+        {"name": "Black pepper", "quantity": null, "unit": null, "notes": "to taste"}
+      ],
+      "steps": [
+        "Preheat oven to 200°C. Line a sheet pan with parchment.",
+        "Toss potatoes and carrots with half the olive oil, salt, and pepper. Spread on pan.",
+        "Place chicken on top, drizzle remaining oil, and season with salt and pepper. Roast 30-35 minutes until chicken is 74°C and vegetables are tender.",
+        "Combine lemon zest, juice, parsley, and minced garlic for a dressing. Spoon over chicken and vegetables before serving."
+      ],
+      "prep_minutes": 12,
+      "cook_minutes": 35,
+      "calories_per_person": 620,
+      "required_tools": ["oven", "sheet pan", "mixing bowl"]
+    }
+  ]
+}"""
+
+    calorie_hint = calories_target
+    member_cals = [m.get("calories_per_day") for m in profile.get("members", []) if m.get("calories_per_day")]
+    if member_cals and not calories_target:
+      try:
+        calorie_hint = int(sum(member_cals) / len(member_cals))
+      except Exception:
+        calorie_hint = calories_target
+    calorie_line = (
+      f"Calorie target: aim for ~{calorie_hint} kcal/person (+/- 10%)" if calorie_hint else ""
+    )
+
+    leftovers_line = f"Leftover ingredients to include: {leftover_notes}" if leftover_notes else ""
+
+    mood_line = ""
+    if mood is not None:
+      mood_line = (
+        f"Week mood slider: {mood} "
+        "(0 = indulgent/comfort, 50 = balanced, 100 = lean/light/high-veg, lower fat)."
+      )
+
+    return f"""
+You are EcoFood's executive chef creating a personalized daily meal plan for {day}.
+
+HOUSEHOLD CONTEXT:
+Members: {', '.join(f"{m['name']} ({m['role']})" for m in profile.get('members', []))}
+Allergens to AVOID: {allergens or 'None'}
+Favorite cuisines/foods: {likes or 'Open to anything'}
+Available cooking tools: {', '.join(tools_list)}
+Attendees:
+- {attendees_text}
+{leftovers_line}
+{f"Pantry items/Notes: {notes}" if notes else ''}
+{f"Directive: Prioritize plant-forward/eco-friendly options." if eco_friendly else ''}
+{calorie_line}
+{mood_line}
+
+TASK: Create 3 meals (Breakfast, Lunch, Dinner) for {day}:
+- Must be safe for ALL household members (strictly avoid allergens)
+- Use ONLY the available cooking tools listed above
+- Incorporate household preferences naturally
+- Fit the time/energy level appropriate for each slot
+- Should be distinct from each other
+- Summaries: concise, <=18 words, no quotes.
+- Steps: 4–6 steps per meal, each 1 sentence, concise but complete (include timing/heat if relevant).
+
+OUTPUT FORMAT (STRICT JSON MATCHING THE SCHEMA BELOW — DO NOT ADD EXTRA KEYS). "
+Wrap the entire response in one fenced block: ```json ... ``` and nothing else:
 {{
   "plan": [
     {{
-      "day": "Mon",
+      "day": "{day}",
       "meal": "Breakfast",
-      "title": "...",
-      "summary": "...",
-      "ingredients": [{{"name": "...", "quantity": "...", "unit": "...", "notes": "..."}}],
-      "steps": ["...", "..."],
-      "prep_minutes": 0,
-      "cook_minutes": 0,
-      "calories_per_person": 0,
-      "required_tools": ["pan", "oven"]
+      "title": "Descriptive meal name",
+      "summary": "Brief description highlighting key flavors and techniques",
+      "ingredients": [
+        {{"name": "ingredient", "quantity": "amount", "unit": "measurement", "notes": "optional prep notes"}}
+      ],
+      "steps": ["Detailed step 1", "Detailed step 2"],
+      "prep_minutes": 15,
+      "cook_minutes": 20,
+      "calories_per_person": 500,
+      "required_tools": ["only tools from available list"]
+    }},
+    {{
+      "day": "{day}",
+      "meal": "Lunch",
+      ...
+    }},
+    {{
+      "day": "{day}",
+      "meal": "Dinner",
+      ...
     }}
   ]
 }}
 
-Constraints:
-- Exactly {len(target_days) * 3} meals (3 meals per listed day) sorted by day then meal (Breakfast/Lunch/Dinner).
-- Avoid dish repetition within the week.
-- Include at least one adventurous or unexpected element each day.
-- Keep instructions concise but descriptive enough to cook.
-- Honor dietary notes and tool availability if provided.
+IMPORTANT: 
+- Return ONLY JSON. No prose, no markdown, no trailing commas.
+- If constraints are impossible, still return a valid JSON with simple, safe ingredients.
+- Double-check allergen safety
+- Only suggest tools that are available
+- Make it interesting but achievable
+- Provide clear, complete cooking instructions
 
-Directives:
-{chr(10).join(f"- {directive}" for directive in directives)}
-
-Return only JSON. No commentary.
+FEW-SHOT EXAMPLES (follow structure, return all three meals for the day):
+{example_one}
 """.strip()
 
-  try:
-    response = generate_text(prompt)
-  except GeminiClientError as exc:
-    raise RuntimeError(f"Gemini menu generation failed: {exc}") from exc
+  tasks = target_days
+  
+  # Rate limiting
+  max_concurrent = int(os.getenv("GEMINI_MAX_CONCURRENT", "10"))
+  semaphore = asyncio.Semaphore(max_concurrent)
 
-  raw_text = response["text"]
-  plan_data = _extract_plan_from_text(raw_text)
-  normalized_plan = _normalize_plan(plan_data, target_days)
+  async def generate_with_limit(day: str) -> tuple[str, dict]:
+    async with semaphore:
+      prompt = build_day_prompt(day)
+      key = day
+      meal_prompts[key] = prompt
+      try:
+        # Use "meal_planning" task type for the complex model
+        result = await generate_text_async(prompt, task_type="meal_planning")
+        return key, result
+      except Exception as exc:
+        logger.error("Failed to generate %s: %s", key, exc)
+        return key, exc
+
+  # Execute all tasks
+  results = await asyncio.gather(
+    *[generate_with_limit(day) for day in tasks],
+    return_exceptions=True,
+  )
+
+  for result in results:
+    if isinstance(result, Exception):
+      # Task-level failure (e.g., config/network)
+      errors[f"task_error_{len(errors)+1}"] = str(result)
+      continue  # Skip failed tasks
+    if isinstance(result, tuple) and len(result) == 2:
+      key, response = result
+      if isinstance(response, Exception):
+        errors[key] = str(response)
+        continue
+        
+      meal_raw[key] = response.get("text", "")
+      meal_finish[key] = response.get("finish_reason")
+      try:
+        plan_data = _extract_plan_from_text(response["text"])
+        # key is the day string (e.g. "Mon")
+        normalized = _normalize_plan(plan_data, target_days, calories_target=calories_target, day_context=key)
+        combined_plan.extend(normalized)
+      except Exception as exc:
+        logger.error(
+          "Failed to parse plan for %s: %s | finish=%s len=%s text=%s",
+          key,
+          exc,
+          response.get("finish_reason"),
+          len(response.get("text", "")),
+          response.get("text", "")[:1200],
+        )
+        errors[key] = f"parse_error: {exc}"
+
+  if not combined_plan:
+    logger.error(
+      "Gemini returned no usable meals. Raw snippets: %s | errors=%s",
+      {k: v[:300] for k, v in meal_raw.items()},
+      errors,
+    )
+    if debug_return:
+      return {
+        "plan": [],
+        "model": "gemini-hybrid",
+        "prompt_map": meal_prompts,
+        "raw_text_map": meal_raw,
+        "finish_reason_map": meal_finish,
+        "error_map": errors,
+      }
+    raise RuntimeError("Gemini failed to generate any valid meals.")
+
+  # Preserve original day order and meal order.
+  day_order = {d: idx for idx, d in enumerate(target_days)}
+  combined_plan.sort(
+    key=lambda item: (
+      day_order.get(item.get("day"), len(day_order)),
+      MEAL_SLOTS.index(item.get("meal", MEAL_SLOTS[0])) if item.get("meal") in MEAL_SLOTS else 0,
+    )
+  )
+
+  combined_prompt = "\n\n".join(f"[{key}]\n{prompt}" for key, prompt in meal_prompts.items())
+  combined_raw = "\n\n".join(f"[{key}]\n{text}" for key, text in meal_raw.items())
 
   return {
-    "plan": normalized_plan,
-    "model": response.get("model", "gemini"),
-    "prompt": prompt,
-    "raw_text": raw_text,
+    "plan": combined_plan,
+    "model": "gemini-hybrid",
+    "prompt": combined_prompt,
+    "raw_text": combined_raw,
+    "prompt_map": meal_prompts,
+    "raw_text_map": meal_raw,
+    "finish_reason_map": meal_finish,
+    "error_map": errors,
   }
 
 
 def _extract_plan_from_text(text: str) -> List[Dict[str, Any]]:
-  json_match = re.search(r"\{[\s\S]*\}", text)
-  if not json_match:
-    raise RuntimeError("Gemini response did not contain JSON.")
+  """
+  Robustly extract JSON from model output, handling code fences and preambles.
+  """
+  # Prefer fenced blocks ```json ... ```
+  code_block = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", text, re.IGNORECASE)
+  if code_block:
+    return _parse_json_blob(code_block.group(1))
+
+  cursor = 0
+  while True:
+    start_index = text.find("{", cursor)
+    if start_index == -1:
+      break
+    end_index = text.rfind("}")
+    if end_index == -1 or end_index < start_index:
+      break
+    candidate = text[start_index : end_index + 1]
+    try:
+      return _parse_json_blob(candidate)
+    except Exception:
+      cursor = start_index + 1
+      continue
+
+  logger.error("No JSON extracted from model output (len=%s). Preview: %s", len(text), text[:300])
+  raise RuntimeError("Gemini response did not contain valid JSON.")
+
+
+def _parse_json_blob(blob: str) -> List[Dict[str, Any]]:
   try:
-    parsed = json.loads(json_match.group(0))
-  except json.JSONDecodeError as exc:
-    raise RuntimeError("Unable to parse Gemini JSON.") from exc
-  plan = parsed.get("plan")
+    parsed = _loads_with_repair(blob)
+  except Exception as exc:
+    logger.warning("Primary JSON parse failed, attempting salvage: %s", exc)
+    salvaged = _salvage_plan_objects(blob)
+    if salvaged:
+      return salvaged
+    raise
+
+  plan = parsed.get("plan") if isinstance(parsed, dict) else None
+  # Salvage: some responses might be a raw list of meals already
+  if plan is None and isinstance(parsed, list):
+    plan = parsed
   if not isinstance(plan, list):
     raise RuntimeError("Gemini JSON missing 'plan' list.")
   return plan
 
 
-def _normalize_plan(plan: List[Dict[str, Any]], target_days: List[str]) -> List[Dict[str, Any]]:
+def _salvage_plan_objects(blob: str) -> List[Dict[str, Any]]:
+  """
+  Last-resort parser: extract individual meal objects that include day/meal keys
+  when the full JSON is truncated. Returns empty list if nothing can be salvaged.
+  """
+  meals: List[Dict[str, Any]] = []
+  # First pass: fully closed objects.
+  closed_obj = re.compile(r"\{[^{}]*\"day\"\s*:\s*\"[^\"']+\"[^{}]*\"meal\"\s*:\s*\"[^\"']+\"[^{}]*\}", re.DOTALL)
+  for match in closed_obj.finditer(blob):
+    candidate = match.group(0)
+    try:
+      parsed = _loads_with_repair(candidate)
+      if isinstance(parsed, dict):
+        meals.append(parsed)
+    except Exception:
+      continue
+  if meals:
+    return meals
+
+  # Second pass: attempt to repair truncated segments from each \"day\": occurrence.
+  anchors = [m.start() for m in re.finditer(r'"day"\s*:\s*"', blob)]
+  anchors.append(len(blob))
+  for i in range(len(anchors) - 1):
+    segment = blob[anchors[i]:anchors[i + 1]]
+    candidate = "{" + segment
+    try:
+      parsed = _loads_with_repair(candidate)
+      if isinstance(parsed, dict) and parsed.get("day") and parsed.get("meal"):
+        meals.append(parsed)
+    except Exception:
+      continue
+  return meals
+
+
+def _loads_with_repair(payload: str) -> Dict[str, Any]:
+  try:
+    return json.loads(payload)
+  except json.JSONDecodeError as exc:
+    repaired = _repair_json(payload)
+    if repaired == payload:
+      raise RuntimeError("Unable to parse Gemini JSON.") from exc
+    try:
+      parsed = json.loads(repaired)
+      logger.warning("Repaired malformed Gemini JSON (error=%s)", exc)
+      return parsed
+    except json.JSONDecodeError as final_exc:
+      raise RuntimeError("Unable to parse Gemini JSON after repair.") from final_exc
+
+
+def _repair_json(payload: str) -> str:
+  fixed = payload
+  # Insert missing commas between adjacent objects/arrays.
+  fixed = re.sub(r"}(\s*){", r"},\1{", fixed)
+  fixed = re.sub(r"\](\s*){", r"],\1{", fixed)
+  fixed = re.sub(r"}(\s*)\[", r"},\1[", fixed)
+  # Insert missing colons between quoted keys and quoted/string values.
+  fixed = re.sub(r'"([^"]+)"\s+"', r'"\1": "', fixed)
+  fixed = re.sub(r'"([^"]+)"\s+(-?\d)', r'"\1": \2', fixed)
+  # Remove dangling commas before closing braces/brackets.
+  fixed = re.sub(r",(\s*[}\]])", r"\1", fixed)
+  # Close an unterminated string if there is an odd number of quotes.
+  if fixed.count('"') % 2 != 0:
+    fixed = fixed + '"'
+  # Balance brackets/braces if the model stopped early.
+  brace_diff = fixed.count("{") - fixed.count("}")
+  if brace_diff > 0:
+    fixed = fixed + ("}" * brace_diff)
+  bracket_diff = fixed.count("[") - fixed.count("]")
+  if bracket_diff > 0:
+    fixed = fixed + ("]" * bracket_diff)
+  return fixed
+
+
+def _normalize_plan(
+  plan: List[Dict[str, Any]],
+  target_days: List[str],
+  *,
+  calories_target: Optional[int] = None,
+  day_context: Optional[str] = None,
+) -> List[Dict[str, Any]]:
   normalized: List[Dict[str, Any]] = []
   day_map = {
     "monday": "Mon",
@@ -230,11 +587,27 @@ def _normalize_plan(plan: List[Dict[str, Any]], target_days: List[str]) -> List[
   allowed_days = {day_map.get(day.strip().lower(), day[:3].title()) for day in target_days}
 
   for index, entry in enumerate(plan):
-    day_value = entry.get("day") or DAY_LABELS[index // len(MEAL_SLOTS) % len(DAY_LABELS)]
+    # If day_context is provided (from the prompt key), force it.
+    # Otherwise try to read from entry, fallback to index-based is risky but kept as last resort.
+    day_value = day_context or entry.get("day")
+    if not day_value:
+       # Fallback: try to infer from target_days if it's a single day request
+       if len(target_days) == 1:
+         day_value = target_days[0]
+       else:
+         day_value = DAY_LABELS[index // len(MEAL_SLOTS) % len(DAY_LABELS)]
+
     day_key = day_value.strip().lower()[:3]
-    day = day_map.get(day_value.strip().lower(), day_map.get(day_key, DAY_LABELS[index // len(MEAL_SLOTS) % len(DAY_LABELS)]))
+    day = day_map.get(day_value.strip().lower(), day_map.get(day_key, day_value[:3].title()))
+    
     if allowed_days and day not in allowed_days:
-      continue
+      # If we have a day_context, we should trust it and override the entry's day if it mismatches
+      if day_context and day_context in allowed_days:
+          day = day_context
+      else:
+          logger.warning("Skipping meal for day %s (allowed=%s)", day, allowed_days)
+          continue
+
     meal_value = entry.get("meal") or MEAL_SLOTS[index % len(MEAL_SLOTS)]
     meal = meal_value.capitalize()
     if meal not in MEAL_SLOTS:
@@ -268,7 +641,7 @@ def _normalize_plan(plan: List[Dict[str, Any]], target_days: List[str]) -> List[
         "steps": steps or ["Gather ingredients and cook to taste."],
         "prep_minutes": _safe_int(entry.get("prep_minutes"), default=10),
         "cook_minutes": _safe_int(entry.get("cook_minutes"), default=15),
-        "calories_per_person": _safe_int(entry.get("calories_per_person"), default=450),
+        "calories_per_person": _safe_int(entry.get("calories_per_person"), default=calories_target or 450),
         "required_tools": entry.get("required_tools") or [],
       }
     )

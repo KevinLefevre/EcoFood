@@ -26,6 +26,9 @@ async def create_plan_job(
     week_start=payload.week_start,
     eco_friendly=payload.eco_friendly,
     use_leftovers=payload.use_leftovers,
+    calories_per_person_default=payload.calories_per_person_default,
+    leftovers_text=payload.leftovers_text,
+    mood=payload.mood,
     notes=payload.notes,
   )
   asyncio.create_task(run_plan_job(job.id))
