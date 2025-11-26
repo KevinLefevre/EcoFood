@@ -18,8 +18,11 @@ from ..schemas import (
   MemberCreate,
   MemberMealsUpdate,
   MemberResponse,
+  LongTermMemoryCreate,
+  LongTermMemoryResponse,
 )
 from ..services import households as household_service
+from ..services.memory_service import memory_service
 
 router = APIRouter(prefix="/households", tags=["households"])
 assistant = HouseholdAssistant()
@@ -147,3 +150,23 @@ async def delete_kitchen_tool(
 ) -> None:
   await household_service.delete_kitchen_tool(db, household_id, tool_id)
   return None
+
+
+@router.get("/{household_id}/memories", response_model=List[LongTermMemoryResponse])
+async def get_memories(
+  household_id: int,
+  category: Optional[str] = None,
+  db: AsyncSession = Depends(get_session),
+) -> List[LongTermMemoryResponse]:
+  return await memory_service.get_memories(db, household_id, category)
+
+
+@router.post("/{household_id}/memories", response_model=LongTermMemoryResponse)
+async def add_memory(
+  household_id: int,
+  payload: LongTermMemoryCreate,
+  db: AsyncSession = Depends(get_session),
+) -> LongTermMemoryResponse:
+  return await memory_service.add_memory(
+    db, household_id, payload.category, payload.value, payload.source_session_id
+  )

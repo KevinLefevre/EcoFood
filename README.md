@@ -48,6 +48,16 @@ graph TD
   D --> G[Final Plan + Timeline]
 ```
 
+## Interactive Planner Chat
+
+EcoFood features a "conversation-first" planner chat that allows users to refine meals interactively:
+
+1.  **Context-Aware**: The agent knows which meal you are editing (Day, Slot, Current Recipe).
+2.  **Conversational Refinement**: Ask for changes naturally (e.g., "Make this vegan," "Swap chicken for tofu," "Add a side salad").
+3.  **Ready-to-Update State**: The agent analyzes your request and indicates when it has enough information to proceed.
+4.  **In-Place Execution**: Once confirmed, the agent generates fully detailed updates (including ingredients and steps) that are applied directly to the meal editor.
+
+
 ## Concepts & Roadmap
 
 - Nutritional balance coach: weekly nutrition scores and gentle suggestions for healthier swaps.

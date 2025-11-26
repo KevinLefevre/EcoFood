@@ -655,7 +655,133 @@ def _safe_int(value: Any, default: int) -> int:
     return default
 
 
+
+async def chef_chat_analysis(
+    current_plan: Dict[str, Any],
+    chat_history: List[Dict[str, str]],
+    user_message: str,
+    memories: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """
+    Analyzes the chat conversation to determine if the agent has enough information
+    to update the meal plan.
+    """
+    memories_text = ""
+    if memories:
+        memories_text = "Long-Term Memories (User Preferences/Facts):\n" + "\n".join(f"- {m}" for m in memories)
+
+    prompt = f"""
+    You are a helpful and creative chef assistant. You are helping a user modify a specific meal in their plan.
+
+    Current Meal Context:
+    {json.dumps(current_plan, indent=2)}
+
+    {memories_text}
+
+    Chat History:
+    {json.dumps(chat_history, indent=2)}
+
+    User's Latest Message: "{user_message}"
+
+    Your Goal:
+    1. Understand what the user wants to change about this meal.
+    2. If the user's request is vague or you need more details (e.g., dietary restrictions, specific ingredients), ask clarifying questions.
+    3. If the user's request is clear and you have enough information to generate a new recipe, confirm what you will do.
+    4. Set "ready" to true ONLY if you have enough information to proceed with the update.
+
+    Output Format:
+    Return a JSON object with the following fields:
+    - "message": Your response to the user (string). Be conversational and helpful.
+    - "ready": true or false (boolean).
+    - "summary": If ready, a brief summary of the changes you will make (string). If not ready, null.
+    """
+
+    try:
+        # Use default task_type which uses the fast model (gemini-2.0-flash-exp)
+        response_data = await generate_text_async(prompt, task_type="default")
+        response_text = response_data["text"]
+        match = re.search(r"\{.*\}", response_text, re.DOTALL)
+        if match:
+            return json.loads(match.group(0))
+        else:
+            logger.error(f"Failed to parse JSON from chat analysis response: {response_text}")
+            return {
+                "message": "I'm having trouble understanding. Could you rephrase that?",
+                "ready": False,
+                "summary": None,
+            }
+    except Exception as e:
+        logger.error(f"Error in chef_chat_analysis: {e}")
+        return {
+            "message": "Sorry, I encountered an error processing your request.",
+            "ready": False,
+            "summary": None,
+        }
+
+
+async def chef_execute_update(
+    current_plan: Dict[str, Any],
+    chat_history: List[Dict[str, str]],
+    memories: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """
+    Generates the updated meal details based on the conversation context.
+    """
+    memories_text = ""
+    if memories:
+        memories_text = "Long-Term Memories (User Preferences/Facts):\n" + "\n".join(f"- {m}" for m in memories)
+
+    prompt = f"""
+    You are a professional chef. You need to update a meal plan entry based on the user's request.
+
+    Original Meal:
+    {json.dumps(current_plan, indent=2)}
+
+    {memories_text}
+
+    Conversation History:
+    {json.dumps(chat_history, indent=2)}
+
+    Task:
+    Generate a fully detailed meal entry that reflects the user's requested changes.
+    Keep the same structure as the original meal but update the content (title, summary, ingredients, steps, etc.).
+    Ensure the new recipe is creative, delicious, and accurate.
+
+    Output Format:
+    Return a JSON object matching the structure of a meal plan entry:
+    {{
+        "title": "New Meal Title",
+        "summary": "Description of the new meal...",
+        "ingredients": [
+            {{ "name": "Ingredient 1", "amount": "1 cup", "category": "produce" }},
+            ...
+        ],
+        "steps": ["Step 1", "Step 2", ...],
+        "prep_minutes": 30,
+        "cook_minutes": 45,
+        "calories_per_person": 600
+    }}
+    """
+
+    try:
+        # Use default task_type for now. 
+        # Ideally we'd use a more capable model but "meal_planning" task type enforces a full plan schema.
+        response_data = await generate_text_async(prompt, task_type="default")
+        response_text = response_data["text"]
+        match = re.search(r"\{.*\}", response_text, re.DOTALL)
+        if match:
+            return json.loads(match.group(0))
+        else:
+            logger.error(f"Failed to parse JSON from execute update response: {response_text}")
+            raise ValueError("Failed to generate valid JSON for meal update")
+    except Exception as e:
+        logger.error(f"Error in chef_execute_update: {e}")
+        raise
+
+
 TOOLS: Dict[str, Any] = {
   "chef.build-menu": chef_build_menu,
   "chef.plan-week": chef_plan_week,
+  "chef.chat-analysis": chef_chat_analysis,
+  "chef.execute-update": chef_execute_update,
 }

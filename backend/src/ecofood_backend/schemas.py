@@ -121,6 +121,8 @@ class PlanWeekRequest(BaseModel):
 class MealPlanEntryUpdate(BaseModel):
   title: Optional[str] = None
   summary: Optional[str] = None
+  ingredients: Optional[List[RecipeIngredient]] = None
+  steps: Optional[List[str]] = None
   attendee_ids: Optional[List[int]] = None
   guest_count: Optional[int] = None
 
@@ -197,6 +199,56 @@ class PlanningJobEventResponse(BaseModel):
   stage: str
   message: str
   payload: Optional[Any] = None
+  created_at: datetime
+
+  class Config:
+    from_attributes = True
+
+
+class SessionCreate(BaseModel):
+  household_id: int
+  session_uuid: Optional[str] = None
+
+
+class SessionResponse(BaseModel):
+  id: int
+  session_uuid: str
+  household_id: int
+  created_at: datetime
+  last_active_at: datetime
+
+  class Config:
+    from_attributes = True
+
+
+class SessionMessageCreate(BaseModel):
+  role: str
+  content: str
+
+
+class SessionMessageResponse(BaseModel):
+  id: int
+  session_id: int
+  role: str
+  content: str
+  created_at: datetime
+
+  class Config:
+    from_attributes = True
+
+
+class LongTermMemoryCreate(BaseModel):
+  category: str
+  value: str
+  source_session_id: Optional[int] = None
+
+
+class LongTermMemoryResponse(BaseModel):
+  id: int
+  household_id: int
+  category: str
+  value: str
+  source_session_id: Optional[int] = None
   created_at: datetime
 
   class Config:

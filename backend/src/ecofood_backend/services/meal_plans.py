@@ -159,6 +159,13 @@ async def update_entry(
     entry.title = payload.title
   if payload.summary is not None:
     entry.summary = payload.summary
+  if payload.ingredients is not None:
+    # Convert Pydantic models to dicts for JSON storage if necessary, 
+    # but SQLAlchemy with JSON type usually handles dicts/lists of dicts.
+    # The payload.ingredients is a list of RecipeIngredient objects.
+    entry.ingredients = [ing.model_dump() for ing in payload.ingredients]
+  if payload.steps is not None:
+    entry.steps = payload.steps
   if payload.attendee_ids is not None:
     entry.attendee_ids = [int(value) for value in payload.attendee_ids]
   if payload.guest_count is not None:

@@ -15,7 +15,12 @@
   - [ ] Sessions & state management (e.g. InMemorySessionService)
   - [ ] Long term memory (e.g. Memory Bank)
 - [ ] Context engineering (e.g. context compaction)
-- [ ] Observability: Logging, Tracing, Metrics
+- [x] Observability: Logging, Tracing, Metrics (Langfuse integration)
 - [ ] Agent evaluation
 - [ ] A2A Protocol
 - [ ] Agent deployment
+
+## Interactive Features
+- [x] **Planner Chat**: Context-aware conversational agent for meal refinement.
+- [x] **In-Place Updates**: Real-time modification of meal details (ingredients, steps) via chat.
+

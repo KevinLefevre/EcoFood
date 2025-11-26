@@ -112,6 +112,8 @@ async def _create_member(db: AsyncSession, household_id: int, payload: MemberCre
 async def _to_household_response(db: AsyncSession, household: Household) -> HouseholdResponse:
   if "kitchen_tools" not in household.__dict__:
     await db.refresh(household, attribute_names=["kitchen_tools"])
+  if "members" not in household.__dict__:
+    await db.refresh(household, attribute_names=["members"])
   members = [await _to_member_response(db, member) for member in household.members]
   tools = (
     [KitchenToolResponse.model_validate(tool) for tool in household.kitchen_tools]

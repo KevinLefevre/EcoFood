@@ -34,6 +34,16 @@ class Household(Base):
     cascade="all, delete-orphan",
     passive_deletes=True,
   )
+  sessions: Mapped[List["Session"]] = relationship(
+    back_populates="household",
+    cascade="all, delete-orphan",
+    passive_deletes=True,
+  )
+  memories: Mapped[List["LongTermMemory"]] = relationship(
+    back_populates="household",
+    cascade="all, delete-orphan",
+    passive_deletes=True,
+  )
 
 
 class HouseholdMember(Base):
@@ -187,3 +197,62 @@ class PlanningJobEvent(Base):
   created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
   job: Mapped[PlanningJob] = relationship(back_populates="events")
+
+
+class Session(Base):
+  __tablename__ = "sessions"
+
+  id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+  session_uuid: Mapped[str] = mapped_column(String(36), unique=True, index=True)
+  household_id: Mapped[int] = mapped_column(
+    ForeignKey("households.id", ondelete="CASCADE"), index=True
+  )
+  created_at: Mapped[datetime] = mapped_column(
+    DateTime(timezone=True), server_default=func.now()
+  )
+  last_active_at: Mapped[datetime] = mapped_column(
+    DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+  )
+
+  household: Mapped[Household] = relationship(back_populates="sessions")
+  messages: Mapped[List["SessionMessage"]] = relationship(
+    back_populates="session", cascade="all, delete-orphan"
+  )
+
+
+class SessionMessage(Base):
+  __tablename__ = "session_messages"
+
+  id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+  session_id: Mapped[int] = mapped_column(
+    ForeignKey("sessions.id", ondelete="CASCADE"), index=True
+  )
+  role: Mapped[str] = mapped_column(String(20))  # user, model, system
+  content: Mapped[str] = mapped_column(Text)
+  created_at: Mapped[datetime] = mapped_column(
+    DateTime(timezone=True), server_default=func.now()
+  )
+
+  session: Mapped[Session] = relationship(back_populates="messages")
+
+
+class LongTermMemory(Base):
+  __tablename__ = "long_term_memories"
+
+  id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+  household_id: Mapped[int] = mapped_column(
+    ForeignKey("households.id", ondelete="CASCADE"), index=True
+  )
+  category: Mapped[str] = mapped_column(
+    String(50)
+  )  # preference, dietary_restriction, etc.
+  value: Mapped[str] = mapped_column(Text)
+  source_session_id: Mapped[int | None] = mapped_column(
+    ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True
+  )
+  created_at: Mapped[datetime] = mapped_column(
+    DateTime(timezone=True), server_default=func.now()
+  )
+
+  household: Mapped[Household] = relationship(back_populates="memories")
+  source_session: Mapped[Session] = relationship()

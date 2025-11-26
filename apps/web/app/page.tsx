@@ -146,20 +146,18 @@ export default function HomePage() {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 rounded-full px-3 py-1.5 transition-colors md:px-4 ${
-                  isActive
-                    ? 'bg-cyan-500 text-slate-950 shadow-[0_0_18px_rgba(34,211,238,0.6)]'
-                    : 'bg-transparent text-slate-300 hover:bg-slate-900/80 hover:text-cyan-200'
-                }`}
+                className={`flex items-center gap-2 rounded-full px-3 py-1.5 transition-colors md:px-4 ${isActive
+                  ? 'bg-cyan-500 text-slate-950 shadow-[0_0_18px_rgba(34,211,238,0.6)]'
+                  : 'bg-transparent text-slate-300 hover:bg-slate-900/80 hover:text-cyan-200'
+                  }`}
               >
                 <span className="font-medium">{tab.label}</span>
                 {tab.badge && (
                   <span
-                    className={`hidden rounded-full border px-2 py-0.5 text-[0.65rem] md:inline ${
-                      isActive
-                        ? 'border-slate-900/60 bg-slate-900/40 text-cyan-100'
-                        : 'border-slate-700 bg-slate-900/40 text-slate-400'
-                    }`}
+                    className={`hidden rounded-full border px-2 py-0.5 text-[0.65rem] md:inline ${isActive
+                      ? 'border-slate-900/60 bg-slate-900/40 text-cyan-100'
+                      : 'border-slate-700 bg-slate-900/40 text-slate-400'
+                      }`}
                   >
                     {tab.badge}
                   </span>
@@ -181,6 +179,88 @@ export default function HomePage() {
           <SettingsTab apiBaseUrl={API_BASE_URL} />
         )}
       </section>
+    </div>
+  );
+}
+
+type PlannerChatPanelProps = {
+  messages: PlannerMessage[];
+  busy: boolean;
+  input: string;
+  onInputChange: (value: string) => void;
+  onSubmit: (event: FormEvent) => void;
+  compact?: boolean;
+  ready?: boolean;
+  summary?: string | null;
+  onGenerate?: () => void;
+};
+
+function PlannerChatPanel({
+  messages,
+  busy,
+  input,
+  onInputChange,
+  onSubmit,
+  compact = false,
+  ready = false,
+  summary = null,
+  onGenerate
+}: PlannerChatPanelProps) {
+  return (
+    <div className="flex flex-col rounded-2xl border border-slate-800 bg-slate-950/60 p-3 text-sm text-slate-100">
+      <div className="flex items-center justify-between text-[0.7rem] uppercase tracking-[0.3em] text-slate-400">
+        <span>Planner chat</span>
+        <span className="text-slate-500">{busy ? 'thinking…' : 'live'}</span>
+      </div>
+      <div
+        className={`mt-2 space-y-2 overflow-y-auto pr-1 text-xs text-slate-200 ${compact ? 'max-h-40' : 'max-h-48'
+          }`}
+      >
+        {messages.map((msg) => (
+          <div
+            key={msg.id}
+            className={`rounded-2xl border px-3 py-2 ${msg.role === 'agent'
+              ? 'border-cyan-500/30 bg-cyan-500/5 text-cyan-100'
+              : 'border-slate-700/80 bg-slate-900/70 text-slate-200'
+              }`}
+          >
+            <p className="text-[0.65rem] uppercase tracking-[0.3em] text-slate-400">
+              {msg.role === 'agent' ? 'agent' : 'you'}
+            </p>
+            <p className="mt-1 text-[0.75rem]">{msg.text}</p>
+          </div>
+        ))}
+      </div>
+      {ready && summary && (
+        <div className="mt-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-2 text-xs text-emerald-100">
+          <p className="font-semibold uppercase tracking-wider text-emerald-400 text-[0.65rem]">Ready to update</p>
+          <p className="mt-1">{summary}</p>
+        </div>
+      )}
+      <form onSubmit={onSubmit} className="mt-3 flex items-center gap-2 text-xs">
+        <input
+          value={input}
+          onChange={(event) => onInputChange(event.target.value)}
+          placeholder="Tell the planner what you need..."
+          className="flex-1 rounded-2xl border border-slate-700 bg-slate-950/80 px-3 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
+        />
+        <button
+          type="submit"
+          disabled={!input.trim() || busy}
+          className="rounded-2xl border border-cyan-400/60 px-4 py-2 text-xs font-semibold text-cyan-100 hover:bg-cyan-500/10 disabled:opacity-40"
+        >
+          Send
+        </button>
+      </form>
+      {ready && onGenerate && (
+        <button
+          onClick={onGenerate}
+          disabled={busy}
+          className="mt-2 w-full rounded-2xl bg-gradient-to-r from-emerald-500 to-cyan-500 px-4 py-2 text-xs font-bold uppercase tracking-wider text-white shadow-lg hover:from-emerald-400 hover:to-cyan-400 disabled:opacity-50"
+        >
+          Generate New Meal
+        </button>
+      )}
     </div>
   );
 }
@@ -425,16 +505,19 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
     [memberNameLookup]
   );
 
+  const [plannerChatReady, setPlannerChatReady] = useState(false);
+  const [plannerChatSummary, setPlannerChatSummary] = useState<string | null>(null);
+  const [plannerChatHistory, setPlannerChatHistory] = useState<
+    { role: string; text: string }[]
+  >([]);
+
   const appendPlannerMessage = useCallback(
     (role: 'agent' | 'user', text: string) => {
       setPlannerMessages((prev) => [
         ...prev,
-        {
-          id: `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          role,
-          text
-        }
+        { id: crypto.randomUUID(), role, text }
       ]);
+      setPlannerChatHistory((prev) => [...prev, { role, text }]);
     },
     []
   );
@@ -475,7 +558,7 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
     }
   }, [useLeftovers, appendPlannerMessage]);
 
-  const handlePlannerChatSubmit = (event: FormEvent) => {
+  const handlePlannerChatSubmit = async (event: FormEvent) => {
     event.preventDefault();
     if (!plannerInput.trim()) {
       return;
@@ -484,66 +567,122 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
     appendPlannerMessage('user', text);
     setPlannerInput('');
     setPlannerChatBusy(true);
-    setTimeout(() => {
-      appendPlannerMessage(
-        'agent',
-        useLeftovers
-          ? `Great, I'll prioritize those leftovers: "${text}". Anything else I should consider?`
-          : `Logged your note: "${text}". I'll blend it into the planning brief.`
-      );
+
+    try {
+      const context = entryEditor.open && entryEditor.entry
+        ? {
+          day: entryEditor.dayLabel,
+          slot: entryEditor.slot,
+          current_meal: {
+            ...entryEditor.entry,
+            title: entryEditor.title,
+            summary: entryEditor.summary,
+            // We might need to pass other edited fields if we want the agent to know about unsaved changes
+          }
+        }
+        : {
+          day: 'General',
+          slot: 'General',
+          current_meal: {}
+        };
+
+      const response = await fetch(`${apiBaseUrl}/api/planner/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: text,
+          history: plannerChatHistory,
+          context: context
+        })
+      });
+
+      if (!response.ok) throw new Error('Chat failed');
+
+      const data = await response.json();
+      appendPlannerMessage('agent', data.message);
+
+      if (data.ready) {
+        setPlannerChatReady(true);
+        setPlannerChatSummary(data.summary);
+      } else {
+        setPlannerChatReady(false);
+        setPlannerChatSummary(null);
+      }
+
+    } catch (error) {
+      console.error(error);
+      appendPlannerMessage('agent', "Sorry, I'm having trouble connecting to the chef.");
+    } finally {
       setPlannerChatBusy(false);
-    }, 600);
+    }
   };
 
-  const PlannerChatPanel = ({ compact = false }: { compact?: boolean }) => (
-    <div className="flex flex-col rounded-2xl border border-slate-800 bg-slate-950/60 p-3 text-sm text-slate-100">
-      <div className="flex items-center justify-between text-[0.7rem] uppercase tracking-[0.3em] text-slate-400">
-        <span>Planner chat</span>
-        <span className="text-slate-500">
-          {plannerChatBusy ? 'thinking…' : 'live'}
-        </span>
-      </div>
-      <div
-        className={`mt-2 space-y-2 overflow-y-auto pr-1 text-xs text-slate-200 ${
-          compact ? 'max-h-40' : 'max-h-48'
-        }`}
-      >
-        {plannerMessages.map((msg) => (
-          <div
-            key={msg.id}
-            className={`rounded-2xl border px-3 py-2 ${
-              msg.role === 'agent'
-                ? 'border-cyan-500/30 bg-cyan-500/5 text-cyan-100'
-                : 'border-slate-700/80 bg-slate-900/70 text-slate-200'
-            }`}
-          >
-            <p className="text-[0.65rem] uppercase tracking-[0.3em] text-slate-400">
-              {msg.role === 'agent' ? 'agent' : 'you'}
-            </p>
-            <p className="mt-1 text-[0.75rem]">{msg.text}</p>
-          </div>
-        ))}
-      </div>
-      <form
-        onSubmit={handlePlannerChatSubmit}
-        className="mt-3 flex items-center gap-2 text-xs"
-      >
-        <input
-          value={plannerInput}
-          onChange={(event) => setPlannerInput(event.target.value)}
-          placeholder="Tell the planner what you need..."
-          className="flex-1 rounded-2xl border border-slate-700 bg-slate-950/80 px-3 py-2 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none"
-        />
-        <button
-          type="submit"
-          disabled={!plannerInput.trim() || plannerChatBusy}
-          className="rounded-2xl border border-cyan-400/60 px-4 py-2 text-xs font-semibold text-cyan-100 hover:bg-cyan-500/10 disabled:opacity-40"
-        >
-          Send
-        </button>
-      </form>
-    </div>
-  );
+  const handleGenerateMeal = async () => {
+    if (!entryEditor.open || !entryEditor.entry) return;
+
+    setPlannerChatBusy(true);
+    try {
+      const context = {
+        day: entryEditor.dayLabel,
+        slot: entryEditor.slot,
+        current_meal: {
+          ...entryEditor.entry,
+          title: entryEditor.title,
+          summary: entryEditor.summary,
+        }
+      };
+
+      const response = await fetch(`${apiBaseUrl}/api/planner/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          history: plannerChatHistory,
+          context: context
+        })
+      });
+
+      if (!response.ok) throw new Error('Generation failed');
+
+      const data = await response.json();
+      const updatedMeal = data.updated_meal;
+
+      // Update entry editor state
+      setEntryEditor(prev => ({
+        ...prev,
+        title: updatedMeal.title,
+        summary: updatedMeal.summary,
+        // We might need to update other fields if the backend returns them
+        // For now, let's assume title and summary are the main ones visible in the editor
+        // If ingredients/steps are returned, we should update the underlying entry object too
+        entry: {
+          ...prev.entry!,
+          ...updatedMeal
+        }
+      }));
+
+      // Also update the main plan state so the calendar reflects changes
+      if (plan) {
+        const updatedEntries = plan.entries.map(e =>
+          (e.day === entryEditor.entry!.day && e.slot === entryEditor.entry!.slot)
+            ? { ...e, ...updatedMeal }
+            : e
+        );
+        setPlan({ ...plan, entries: updatedEntries });
+      }
+
+      appendPlannerMessage('agent', "I've updated the meal for you. Don't forget to save!");
+      setPlannerChatReady(false);
+      setPlannerChatSummary(null);
+
+    } catch (error) {
+      console.error(error);
+      appendPlannerMessage('agent', "Sorry, I couldn't generate the meal update.");
+    } finally {
+      setPlannerChatBusy(false);
+    }
+  };
+
+
 
   const AgentBriefControls = () => (
     <>
@@ -731,13 +870,39 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
           }
           if (payload.stage === 'planning' && typeof payload.payload?.day === 'string') {
             setCurrentPlanningDay(payload.payload.day);
-            const slotKey = `${payload.payload.day}-${payload.payload.slot ?? ''}`;
-            setPlanningSlots((prev) => ({ ...prev, [slotKey]: 'pending' }));
+            const day = payload.payload.day;
+            const slot = payload.payload.slot;
+            setPlanningSlots((prev) => {
+              const next = { ...prev };
+              if (slot) {
+                next[`${day}-${slot}`] = 'pending';
+              } else {
+                // Mark all slots for the day as pending
+                MEAL_SLOTS.forEach((s) => {
+                  next[`${day}-${s}`] = 'pending';
+                });
+              }
+              return next;
+            });
           }
           if (payload.stage === 'planned') {
             setCurrentPlanningDay(null);
-            const slotKey = `${payload.payload?.day ?? ''}-${payload.payload?.slot ?? ''}`;
-            setPlanningSlots((prev) => ({ ...prev, [slotKey]: 'done' }));
+            const day = payload.payload?.day;
+            const slot = payload.payload?.slot;
+            if (day) {
+              setPlanningSlots((prev) => {
+                const next = { ...prev };
+                if (slot) {
+                  next[`${day}-${slot}`] = 'done';
+                } else {
+                  // Mark all slots for the day as done
+                  MEAL_SLOTS.forEach((s) => {
+                    next[`${day}-${s}`] = 'done';
+                  });
+                }
+                return next;
+              });
+            }
           }
           if (payload.payload?.entries) {
             applyPartialEntries(payload.payload.entries as MealPlanEntry[]);
@@ -1048,6 +1213,8 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
           body: JSON.stringify({
             title: entryEditor.title,
             summary: entryEditor.summary,
+            ingredients: entryEditor.entry.ingredients,
+            steps: entryEditor.entry.steps,
             attendee_ids: entryEditor.attendeeIds,
             guest_count: entryEditor.guestCount
           })
@@ -1060,11 +1227,11 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
       setPlan((prev) =>
         prev
           ? {
-              ...prev,
-              entries: prev.entries.map((item) =>
-                item.id === updated.id ? updated : item
-              )
-            }
+            ...prev,
+            entries: prev.entries.map((item) =>
+              item.id === updated.id ? updated : item
+            )
+          }
           : prev
       );
       closeEntryEditor();
@@ -1132,11 +1299,10 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
 
         {(error || message) && (
           <div
-            className={`rounded-2xl border px-4 py-3 text-sm ${
-              error
-                ? 'border-rose-500/40 bg-rose-500/10 text-rose-100'
-                : 'border-emerald-400/40 bg-emerald-500/10 text-emerald-100'
-            }`}
+            className={`rounded-2xl border px-4 py-3 text-sm ${error
+              ? 'border-rose-500/40 bg-rose-500/10 text-rose-100'
+              : 'border-emerald-400/40 bg-emerald-500/10 text-emerald-100'
+              }`}
           >
             {error ?? message}
           </div>
@@ -1155,28 +1321,28 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
                   : 'Empty week. Plan it with the agents or review a past week.'}
               </p>
             </div>
-          <div className="flex items-center gap-2 text-xs">
-            <button
-              onClick={() => shiftWeek(-1)}
-              className="rounded-full border border-slate-700 px-3 py-1.5 text-slate-300 hover:border-cyan-400 hover:text-cyan-100"
-            >
-              ◀ Previous
-            </button>
-            <button
-              onClick={() => shiftWeek(1)}
-              className="rounded-full border border-slate-700 px-3 py-1.5 text-slate-300 hover:border-cyan-400 hover:text-cyan-100"
-            >
-              Next ▶
-            </button>
-            <button
-              onClick={handleResetWeek}
-              disabled={!plan || plannerBusy}
-              className="rounded-full border border-rose-400/60 px-3 py-1.5 text-rose-100 hover:border-rose-400 hover:text-rose-200 disabled:opacity-40"
-            >
-              Reset week
-            </button>
+            <div className="flex items-center gap-2 text-xs">
+              <button
+                onClick={() => shiftWeek(-1)}
+                className="rounded-full border border-slate-700 px-3 py-1.5 text-slate-300 hover:border-cyan-400 hover:text-cyan-100"
+              >
+                ◀ Previous
+              </button>
+              <button
+                onClick={() => shiftWeek(1)}
+                className="rounded-full border border-slate-700 px-3 py-1.5 text-slate-300 hover:border-cyan-400 hover:text-cyan-100"
+              >
+                Next ▶
+              </button>
+              <button
+                onClick={handleResetWeek}
+                disabled={!plan || plannerBusy}
+                className="rounded-full border border-rose-400/60 px-3 py-1.5 text-rose-100 hover:border-rose-400 hover:text-rose-200 disabled:opacity-40"
+              >
+                Reset week
+              </button>
+            </div>
           </div>
-        </div>
 
           <div className="relative rounded-2xl border border-slate-800 bg-slate-950/70 p-2 md:p-3">
             {planLoading && (
@@ -1226,11 +1392,10 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
                             openMealViewer(day, slot);
                           }
                         }}
-                        className={`relative rounded-2xl border border-slate-800/70 bg-slate-900/70 p-2 text-[0.65rem] text-slate-200 transition-colors ${
-                          hasEntry
-                            ? 'cursor-pointer hover:border-cyan-400/50'
-                            : 'cursor-pointer opacity-70 hover:border-slate-700'
-                        }`}
+                        className={`relative rounded-2xl border border-slate-800/70 bg-slate-900/70 p-2 text-[0.65rem] text-slate-200 transition-colors ${hasEntry
+                          ? 'cursor-pointer hover:border-cyan-400/50'
+                          : 'cursor-pointer opacity-70 hover:border-slate-700'
+                          } ${slotStatus === 'pending' ? 'animate-pulse border-cyan-500/50 bg-cyan-900/10' : ''}`}
                       >
                         {slotStatus === 'pending' && (
                           <span className="absolute right-1 top-1 inline-flex h-4 w-4 items-center justify-center">
@@ -1259,7 +1424,7 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
                               }}
                               className="rounded-full border border-slate-700/70 px-2 py-0.5 text-[0.55rem] text-slate-300 hover:border-cyan-400 hover:text-cyan-100"
                             >
-                              Manage diners
+                              Edit meal
                             </button>
                           )}
                           {plan && plan.use_leftovers && entryHighlightsLeftovers && (
@@ -1309,7 +1474,13 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
                     : 'Plan this week'}
               </button>
             </div>
-            <PlannerChatPanel />
+            <PlannerChatPanel
+              messages={plannerMessages}
+              busy={plannerChatBusy}
+              input={plannerInput}
+              onInputChange={setPlannerInput}
+              onSubmit={handlePlannerChatSubmit}
+            />
           </div>
         </div>
 
@@ -1352,11 +1523,10 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
                     <button
                       key={summary.id}
                       onClick={() => setCurrentWeekStart(summary.week_start)}
-                      className={`rounded-full border px-3 py-1 text-xs ${
-                        isActive
-                          ? 'border-cyan-400/60 bg-cyan-500/10 text-cyan-100'
-                          : 'border-slate-700 bg-slate-950/80 text-slate-300 hover:border-cyan-400/40 hover:text-cyan-100'
-                      }`}
+                      className={`rounded-full border px-3 py-1 text-xs ${isActive
+                        ? 'border-cyan-400/60 bg-cyan-500/10 text-cyan-100'
+                        : 'border-slate-700 bg-slate-950/80 text-slate-300 hover:border-cyan-400/40 hover:text-cyan-100'
+                        }`}
                     >
                       {weekRangeLabel(summary.week_start)}
                     </button>
@@ -1394,7 +1564,13 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
             <div className="mt-4 space-y-4">
               <div className="space-y-4">
                 <AgentBriefControls />
-                <PlannerChatPanel />
+                <PlannerChatPanel
+                  messages={plannerMessages}
+                  busy={plannerChatBusy}
+                  input={plannerInput}
+                  onInputChange={setPlannerInput}
+                  onSubmit={handlePlannerChatSubmit}
+                />
                 <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4 text-xs text-slate-300">
                   <p className="font-semibold text-slate-200">Advanced directives (coming soon)</p>
                   <ul className="mt-2 list-disc space-y-1 pl-4">
@@ -1502,81 +1678,81 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
                 Edit this meal
               </button>
             </div>
-      </div>
-    </div>
-  )}
-
-  {planningOverlayOpen && (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/80 px-4 py-6">
-      <div className="w-full max-w-lg rounded-3xl border border-slate-800 bg-slate-950/90 p-5 text-sm text-slate-100 shadow-[0_0_45px_rgba(34,211,238,0.35)]">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Loop agent status</p>
-            <p className="text-[0.7rem] text-slate-500">
-              {activePlanJobId ? `Job #${activePlanJobId}` : 'Awaiting next run'}
-            </p>
           </div>
-          <button
-            onClick={() => {
-              if (!activePlanJobId) {
-                setPlanningOverlayOpen(false);
-              }
-            }}
-            className="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-400 hover:border-cyan-400 hover:text-cyan-100 disabled:opacity-40"
-            disabled={Boolean(activePlanJobId)}
-          >
-            Close
-          </button>
         </div>
-        {currentPlanningDay && (
-          <p className="mt-3 text-sm text-cyan-200">
-            Planning {currentPlanningDay}…
-          </p>
-        )}
-        {planningError && (
-          <p className="mt-3 rounded-2xl border border-rose-500/50 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
-            {planningError}
-          </p>
-        )}
-        <div className="mt-3 max-h-64 space-y-2 overflow-y-auto pr-2 text-xs text-slate-200">
-          {planningMessages.map((msg, idx) => (
-            <p key={`${msg}-${idx}`}>{msg}</p>
-          ))}
-        </div>
-        <div className="mt-4 flex flex-wrap gap-2 text-xs">
-          {activePlanJobId && (
-            <button
-              onClick={handleAbortPlanning}
-              className="rounded-full border border-rose-400/50 px-4 py-2 text-rose-100 hover:border-rose-300 hover:text-rose-200"
-            >
-              Abort planning
-            </button>
-          )}
-          {planningError && !activePlanJobId && (
-            <button
-              onClick={() => {
-                setPlanningOverlayOpen(false);
-                handlePlanWeek();
-              }}
-              className="rounded-full border border-cyan-400/50 px-4 py-2 text-cyan-100 hover:border-cyan-300 hover:text-cyan-50"
-            >
-              Retry now
-            </button>
-          )}
-          {!activePlanJobId && !planningError && (
-            <button
-              onClick={() => setPlanningOverlayOpen(false)}
-              className="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:border-cyan-400 hover:text-cyan-100"
-            >
-              Hide overlay
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
-  )}
+      )}
 
-  {sessionViewerOpen && (
+      {planningOverlayOpen && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/80 px-4 py-6">
+          <div className="w-full max-w-lg rounded-3xl border border-slate-800 bg-slate-950/90 p-5 text-sm text-slate-100 shadow-[0_0_45px_rgba(34,211,238,0.35)]">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Loop agent status</p>
+                <p className="text-[0.7rem] text-slate-500">
+                  {activePlanJobId ? `Job #${activePlanJobId}` : 'Awaiting next run'}
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  if (!activePlanJobId) {
+                    setPlanningOverlayOpen(false);
+                  }
+                }}
+                className="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-400 hover:border-cyan-400 hover:text-cyan-100 disabled:opacity-40"
+                disabled={Boolean(activePlanJobId)}
+              >
+                Close
+              </button>
+            </div>
+            {currentPlanningDay && (
+              <p className="mt-3 text-sm text-cyan-200">
+                Planning {currentPlanningDay}…
+              </p>
+            )}
+            {planningError && (
+              <p className="mt-3 rounded-2xl border border-rose-500/50 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
+                {planningError}
+              </p>
+            )}
+            <div className="mt-3 max-h-64 space-y-2 overflow-y-auto pr-2 text-xs text-slate-200">
+              {planningMessages.map((msg, idx) => (
+                <p key={`${msg}-${idx}`}>{msg}</p>
+              ))}
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2 text-xs">
+              {activePlanJobId && (
+                <button
+                  onClick={handleAbortPlanning}
+                  className="rounded-full border border-rose-400/50 px-4 py-2 text-rose-100 hover:border-rose-300 hover:text-rose-200"
+                >
+                  Abort planning
+                </button>
+              )}
+              {planningError && !activePlanJobId && (
+                <button
+                  onClick={() => {
+                    setPlanningOverlayOpen(false);
+                    handlePlanWeek();
+                  }}
+                  className="rounded-full border border-cyan-400/50 px-4 py-2 text-cyan-100 hover:border-cyan-300 hover:text-cyan-50"
+                >
+                  Retry now
+                </button>
+              )}
+              {!activePlanJobId && !planningError && (
+                <button
+                  onClick={() => setPlanningOverlayOpen(false)}
+                  className="rounded-full border border-slate-700 px-4 py-2 text-slate-300 hover:border-cyan-400 hover:text-cyan-100"
+                >
+                  Hide overlay
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {sessionViewerOpen && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/80 px-4 py-6">
           <div className="w-full max-w-3xl rounded-3xl border border-slate-800 bg-slate-950/90 p-5 text-sm text-slate-100 shadow-[0_0_45px_rgba(15,118,255,0.25)]">
             <div className="flex items-center justify-between">
@@ -1717,6 +1893,38 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
                     placeholder="Notes, prep reminders, or nutrition highlights."
                   />
                 </div>
+                <div>
+                  <label className="text-xs uppercase tracking-[0.2em] text-slate-400">Ingredients</label>
+                  <div className="mt-2 max-h-40 overflow-y-auto rounded-2xl border border-slate-700 bg-slate-950/80 px-3 py-2 text-sm text-slate-100">
+                    {entryEditor.entry?.ingredients && entryEditor.entry.ingredients.length > 0 ? (
+                      <ul className="list-disc pl-4 space-y-1">
+                        {entryEditor.entry.ingredients.map((ing, idx) => (
+                          <li key={idx}>
+                            <span className="font-medium">{ing.name}</span>
+                            {ing.quantity && <span className="text-slate-400"> - {ing.quantity} {ing.unit}</span>}
+                            {ing.notes && <span className="text-slate-500 italic"> ({ing.notes})</span>}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-slate-500 italic">No ingredients listed.</p>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs uppercase tracking-[0.2em] text-slate-400">Steps</label>
+                  <div className="mt-2 max-h-40 overflow-y-auto rounded-2xl border border-slate-700 bg-slate-950/80 px-3 py-2 text-sm text-slate-100">
+                    {entryEditor.entry?.steps && entryEditor.entry.steps.length > 0 ? (
+                      <ol className="list-decimal pl-4 space-y-1">
+                        {entryEditor.entry.steps.map((step, idx) => (
+                          <li key={idx}>{step}</li>
+                        ))}
+                      </ol>
+                    ) : (
+                      <p className="text-slate-500 italic">No steps listed.</p>
+                    )}
+                  </div>
+                </div>
                 {selectedHousehold && (
                   <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
                     <label className="text-xs uppercase tracking-[0.2em] text-slate-400">
@@ -1776,7 +1984,17 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
                 </button>
               </form>
               <div>
-                <PlannerChatPanel compact />
+                <PlannerChatPanel
+                  messages={plannerMessages}
+                  busy={plannerChatBusy}
+                  input={plannerInput}
+                  onInputChange={setPlannerInput}
+                  onSubmit={handlePlannerChatSubmit}
+                  compact
+                  ready={plannerChatReady}
+                  summary={plannerChatSummary}
+                  onGenerate={handleGenerateMeal}
+                />
               </div>
             </div>
           </div>
@@ -1826,11 +2044,10 @@ function TimelineCard({
             {stageLabel}
           </p>
           <span
-            className={`mt-1 inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-[0.6rem] ${
-              meta?.kind === 'parallel'
-                ? 'border-purple-400/50 text-purple-200'
-                : 'border-cyan-400/50 text-cyan-100'
-            }`}
+            className={`mt-1 inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-[0.6rem] ${meta?.kind === 'parallel'
+              ? 'border-purple-400/50 text-purple-200'
+              : 'border-cyan-400/50 text-cyan-100'
+              }`}
           >
             {meta ? `${meta.kind === 'parallel' ? 'Parallel' : 'Sequential'} A2A` : 'A2A step'}
           </span>
@@ -1966,8 +2183,8 @@ function buildTimelineDetails(event: AgentTimelineEvent): string[] {
         }
         const roles = isRecord(profile.roles)
           ? Object.entries(profile.roles).filter(
-              ([, value]) => typeof value === 'number'
-            )
+            ([, value]) => typeof value === 'number'
+          )
           : [];
         if (roles.length) {
           const roleSummary = roles
@@ -1977,12 +2194,12 @@ function buildTimelineDetails(event: AgentTimelineEvent): string[] {
         }
         const allergens = Array.isArray(profile.allergens)
           ? profile.allergens
-              .map((item) =>
-                isRecord(item) && typeof item.name === 'string'
-                  ? item.name
-                  : null
-              )
-              .filter((name): name is string => Boolean(name))
+            .map((item) =>
+              isRecord(item) && typeof item.name === 'string'
+                ? item.name
+                : null
+            )
+            .filter((name): name is string => Boolean(name))
           : [];
         if (allergens.length) {
           lines.push(
@@ -1991,12 +2208,12 @@ function buildTimelineDetails(event: AgentTimelineEvent): string[] {
         }
         const likes = Array.isArray(profile.top_likes)
           ? profile.top_likes
-              .map((item) =>
-                isRecord(item) && typeof item.name === 'string'
-                  ? item.name
-                  : null
-              )
-              .filter((name): name is string => Boolean(name))
+            .map((item) =>
+              isRecord(item) && typeof item.name === 'string'
+                ? item.name
+                : null
+            )
+            .filter((name): name is string => Boolean(name))
           : [];
         if (likes.length) {
           lines.push(
@@ -2009,8 +2226,8 @@ function buildTimelineDetails(event: AgentTimelineEvent): string[] {
     case 'plan.candidate': {
       const planItems = Array.isArray(payload.plan)
         ? payload.plan.filter((item): item is Record<string, any> =>
-            isRecord(item)
-          )
+          isRecord(item)
+        )
         : [];
       if (planItems.length) {
         const dayCount = new Set(
@@ -2104,8 +2321,8 @@ function buildTimelineDetails(event: AgentTimelineEvent): string[] {
         }
         const labels = Array.isArray(analysis.labels)
           ? analysis.labels.filter(
-              (label): label is string => typeof label === 'string'
-            )
+            (label): label is string => typeof label === 'string'
+          )
           : [];
         if (labels.length) {
           lines.push(`Nutrition tags: ${labels.join(', ')}.`);
@@ -2128,8 +2345,8 @@ function buildTimelineDetails(event: AgentTimelineEvent): string[] {
       }
       const annotated = Array.isArray(payload.annotated_plan)
         ? payload.annotated_plan.filter((item): item is Record<string, any> =>
-            isRecord(item)
-          )
+          isRecord(item)
+        )
         : [];
       const annotatedWithHint = annotated.find(
         (item) => typeof item.pantry_hint === 'string' && item.pantry_hint
@@ -2939,7 +3156,7 @@ function HouseholdTab({ apiBaseUrl }: HouseholdTabProps) {
             </h3>
             <p className="text-[0.7rem] text-slate-500">Saved directly to the database.</p>
           </div>
-*** End Patch
+          *** End Patch
 
           <div className="space-y-3 text-xs md:text-sm">
             <div className="space-y-1">
@@ -3211,11 +3428,10 @@ function HouseholdTab({ apiBaseUrl }: HouseholdTabProps) {
                   className={`flex ${msg.role === 'agent' ? 'justify-start' : 'justify-end'}`}
                 >
                   <div
-                    className={`max-w-[80%] rounded-2xl px-3 py-2 text-[0.75rem] ${
-                      msg.role === 'agent'
-                        ? 'bg-slate-800/80 text-slate-100'
-                        : 'bg-cyan-500/20 text-cyan-100'
-                    }`}
+                    className={`max-w-[80%] rounded-2xl px-3 py-2 text-[0.75rem] ${msg.role === 'agent'
+                      ? 'bg-slate-800/80 text-slate-100'
+                      : 'bg-cyan-500/20 text-cyan-100'
+                      }`}
                   >
                     {msg.text}
                   </div>
@@ -3293,11 +3509,10 @@ function HouseholdTab({ apiBaseUrl }: HouseholdTabProps) {
                         type="button"
                         key={slot}
                         onClick={() => toggleMealSelection(slot)}
-                        className={`rounded-full border px-4 py-1 text-sm transition ${
-                          active
-                            ? 'border-cyan-400/70 bg-cyan-500/10 text-cyan-100 shadow-[0_0_20px_rgba(34,211,238,0.25)]'
-                            : 'border-slate-700 bg-slate-900/60 text-slate-300 hover:border-cyan-400/40 hover:text-cyan-100'
-                        }`}
+                        className={`rounded-full border px-4 py-1 text-sm transition ${active
+                          ? 'border-cyan-400/70 bg-cyan-500/10 text-cyan-100 shadow-[0_0_20px_rgba(34,211,238,0.25)]'
+                          : 'border-slate-700 bg-slate-900/60 text-slate-300 hover:border-cyan-400/40 hover:text-cyan-100'
+                          }`}
                       >
                         {slot}
                       </button>
@@ -3323,11 +3538,10 @@ function HouseholdTab({ apiBaseUrl }: HouseholdTabProps) {
                               type="button"
                               key={`${day}-${slot}`}
                               onClick={() => toggleScheduleSlot(day, slot)}
-                              className={`rounded-full border px-3 py-1 text-[0.65rem] ${
-                                active
-                                  ? 'border-emerald-400/60 bg-emerald-500/10 text-emerald-100'
-                                  : 'border-slate-700 bg-slate-950/60 text-slate-400 hover:border-cyan-400/40 hover:text-cyan-100'
-                              }`}
+                              className={`rounded-full border px-3 py-1 text-[0.65rem] ${active
+                                ? 'border-emerald-400/60 bg-emerald-500/10 text-emerald-100'
+                                : 'border-slate-700 bg-slate-950/60 text-slate-400 hover:border-cyan-400/40 hover:text-cyan-100'
+                                }`}
                             >
                               {slot}
                             </button>
@@ -3375,8 +3589,7 @@ function SettingsTab({ apiBaseUrl }: SettingsTabProps) {
       });
       const data = await res.json().catch(() => ({}));
       setMessage(
-        `Backend responded (${res.status}): ${
-          data.status || 'see logs / implementation'
+        `Backend responded (${res.status}): ${data.status || 'see logs / implementation'
         }`
       );
     } catch (err) {
