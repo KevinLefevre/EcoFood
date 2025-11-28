@@ -13,7 +13,11 @@ from ..schemas import (
   MealPlanEntryUpdate,
   MealPlanResponse,
   MealPlanSummaryResponse,
+  StatPoint,
+  StatsResponse,
 )
+from ecofood_backend.agent.clients.gemini import generate_text_async
+import json
 
 DAY_INDEX = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4, "Sat": 5, "Sun": 6}
 MEAL_SLOTS = ["Breakfast", "Lunch", "Dinner"]
@@ -230,3 +234,84 @@ async def update_plan_timeline(
   if plan:
     plan.timeline = timeline
     await db.commit()
+
+
+async def get_household_stats(db: AsyncSession, household_id: int) -> StatsResponse:
+  # Fetch all entries for the household
+  result = await db.execute(
+    select(MealPlanEntry)
+    .join(MealPlan)
+    .where(MealPlan.household_id == household_id)
+    .order_by(MealPlanEntry.day)
+  )
+  entries = result.scalars().all()
+
+  # Helper to aggregate stats
+  def aggregate(grouped_entries: dict) -> List[StatPoint]:
+    points = []
+    for label, group in grouped_entries.items():
+      total_cals = sum(e.calories_per_person or 0 for e in group)
+      count_cals = sum(1 for e in group if e.calories_per_person)
+      
+      total_co2 = sum(e.co2_per_person or 0 for e in group)
+      count_co2 = sum(1 for e in group if e.co2_per_person)
+      
+      points.append(StatPoint(
+        label=label,
+        mean_calories=round(total_cals / count_cals) if count_cals > 0 else 0,
+        mean_co2_per_meal=round(total_co2 / count_co2) if count_co2 > 0 else 0,
+        total_co2=round(total_co2)
+      ))
+    return sorted(points, key=lambda p: p.label)
+
+  from collections import defaultdict
+  
+  by_week = defaultdict(list)
+  by_month = defaultdict(list)
+  by_year = defaultdict(list)
+
+  for entry in entries:
+    # Week label: "2023-W40"
+    iso_year, iso_week, _ = entry.day.isocalendar()
+    week_label = f"{iso_year}-W{iso_week:02d}"
+    by_week[week_label].append(entry)
+
+    # Month label: "2023-10"
+    month_label = entry.day.strftime("%Y-%m")
+    by_month[month_label].append(entry)
+
+    # Year label: "2023"
+    year_label = str(entry.day.year)
+    by_year[year_label].append(entry)
+
+  return StatsResponse(
+    weekly=aggregate(by_week),
+    monthly=aggregate(by_month),
+    yearly=aggregate(by_year),
+  )
+
+
+async def generate_stats_insight(stats: StatsResponse) -> str:
+  """
+  Generate a friendly insight/summary based on the household stats.
+  """
+  prompt = f"""
+  Analyze the following household meal plan statistics and provide a friendly, encouraging insight or recommendation.
+  Focus on CO2 savings and healthy eating (calories).
+  
+  Stats:
+  - Weekly: {stats.weekly[-4:] if stats.weekly else 'No data'} (Last 4 weeks)
+  - Monthly: {stats.monthly[-3:] if stats.monthly else 'No data'} (Last 3 months)
+  - Yearly: {stats.yearly[-1:] if stats.yearly else 'No data'} (Current year)
+  
+  Return a JSON object with a single key "insight" containing the text.
+  Keep it short (max 2 sentences).
+  """
+  
+  try:
+    response = await generate_text_async(prompt, task_type="stats_insight")
+    data = json.loads(response["text"])
+    return data.get("insight", "Great job tracking your meals! Keep it up to see more insights.")
+  except Exception as e:
+    print(f"Error generating insight: {e}")
+    return "Great job tracking your meals! Keep it up to see more insights."

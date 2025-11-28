@@ -8,12 +8,14 @@ import {
   useRef,
   useState
 } from 'react';
+import StatsView from './components/StatsView';
 
-type TabId = 'calendar' | 'household' | 'settings';
+type TabId = 'calendar' | 'household' | 'settings' | 'stats';
 
 const TABS: { id: TabId; label: string; badge?: string }[] = [
   { id: 'calendar', label: 'Calendar', badge: 'Weekly view' },
   { id: 'household', label: 'Household', badge: 'People & preferences' },
+  { id: 'stats', label: 'Stats', badge: 'Trends' },
   { id: 'settings', label: 'Settings', badge: 'Dev tools' }
 ];
 
@@ -183,6 +185,9 @@ export default function HomePage() {
         )}
         {activeTab === 'settings' && (
           <SettingsTab apiBaseUrl={API_BASE_URL} />
+        )}
+        {activeTab === 'stats' && (
+          <StatsView apiBaseUrl={API_BASE_URL} />
         )}
       </section>
     </div>
@@ -923,6 +928,7 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
               fetchSummaries(selectedHouseholdId);
             }
             setPlanningOverlayOpen(false);
+            setMessage(null);
           } else if (payload.stage === 'error') {
             setPlanningError(
               typeof payload.payload?.error === 'string'
@@ -933,12 +939,14 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
             setActivePlanJobId(null);
             setCurrentPlanningDay(null);
             setPlanningOverlayOpen(true);
+            setMessage(null);
           } else if (payload.stage === 'cancelled') {
             appendPlanningMessage('Job cancelled.');
             clearPlanJobChannel();
             setActivePlanJobId(null);
             setCurrentPlanningDay(null);
             setPlanningOverlayOpen(false);
+            setMessage(null);
           }
         } catch (err) {
           appendPlanningMessage('Malformed event payload');

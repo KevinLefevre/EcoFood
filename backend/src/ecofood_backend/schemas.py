@@ -260,3 +260,16 @@ class LongTermMemoryResponse(BaseModel):
 HouseholdResponse.update_forward_refs()
 MealPlanEntryResponse.update_forward_refs()
 MealPlanResponse.update_forward_refs()
+
+
+class StatPoint(BaseModel):
+  label: str
+  mean_calories: float
+  mean_co2_per_meal: float
+  total_co2: float
+
+
+class StatsResponse(BaseModel):
+  weekly: List[StatPoint]
+  monthly: List[StatPoint]
+  yearly: List[StatPoint]

@@ -7,7 +7,9 @@ from .database import init_db
 from .routers import households as households_router
 from .routers import meal_plans as meal_plans_router
 from .routers import plan_jobs as plan_jobs_router
+from .routers import plan_jobs as plan_jobs_router
 from .routers import sessions as sessions_router
+from .routers import stats as stats_router
 
 
 from .apis import chat_api
@@ -58,7 +60,9 @@ def create_app() -> FastAPI:
   app.include_router(meal_plans_router.router)
   app.include_router(plan_jobs_router.router)
   app.include_router(chat_api.router)
+  app.include_router(chat_api.router)
   app.include_router(sessions_router.router)
+  app.include_router(stats_router.router)
 
   return app
 
