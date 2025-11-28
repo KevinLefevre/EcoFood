@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -55,9 +55,10 @@ async def remove_member(
   household_id: int = Path(..., gt=0),
   member_id: int = Path(..., gt=0),
   db: AsyncSession = Depends(get_session),
-) -> None:
+):
   await household_service.delete_member(db, household_id, member_id)
-  return None
+  return
+
 
 
 @router.patch(
@@ -147,9 +148,10 @@ async def delete_kitchen_tool(
   household_id: int,
   tool_id: int,
   db: AsyncSession = Depends(get_session),
-) -> None:
+):
   await household_service.delete_kitchen_tool(db, household_id, tool_id)
-  return None
+  return
+
 
 
 @router.get("/{household_id}/memories", response_model=List[LongTermMemoryResponse])

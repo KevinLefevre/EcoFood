@@ -25,6 +25,26 @@ def _map_plan(plan: MealPlan) -> MealPlanResponse:
     if entry.attendee_ids is None:
       entry.attendee_ids = []
     entries.append(MealPlanEntryResponse.model_validate(entry))
+  
+  total_cals = 0
+  count_cals = 0
+  total_co2 = 0
+  count_co2 = 0
+
+  for entry in entries:
+    if entry.calories_per_person:
+      total_cals += entry.calories_per_person
+      count_cals += 1
+    if entry.co2_per_person:
+      total_co2 += entry.co2_per_person
+      count_co2 += 1
+  
+  stats = {
+    "mean_calories_per_person": round(total_cals / count_cals) if count_cals > 0 else 0,
+    "mean_co2_per_person": round(total_co2 / count_co2) if count_co2 > 0 else 0,
+    "total_co2_per_person": round(total_co2)
+  }
+
   return MealPlanResponse(
     id=plan.id,
     household_id=plan.household_id,
@@ -33,6 +53,7 @@ def _map_plan(plan: MealPlan) -> MealPlanResponse:
     use_leftovers=plan.use_leftovers,
     notes=plan.notes,
     timeline=plan.timeline,
+    stats=stats,
     entries=entries,
   )
 
@@ -136,6 +157,7 @@ async def save_plan(
         prep_minutes=item.get("prep_minutes"),
         cook_minutes=item.get("cook_minutes"),
         calories_per_person=item.get("calories_per_person"),
+        co2_per_person=item.get("co2_per_person"),
         attendee_ids=attendees,
         guest_count=0,
       )
@@ -170,6 +192,8 @@ async def update_entry(
     entry.attendee_ids = [int(value) for value in payload.attendee_ids]
   if payload.guest_count is not None:
     entry.guest_count = max(0, payload.guest_count)
+  if payload.co2_per_person is not None:
+    entry.co2_per_person = payload.co2_per_person
   await db.commit()
   await db.refresh(entry)
   return MealPlanEntryResponse.model_validate(entry)

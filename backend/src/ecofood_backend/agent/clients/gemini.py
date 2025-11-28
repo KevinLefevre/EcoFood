@@ -84,6 +84,7 @@ def _get_model_for_task(task_type: str = "default"):
                 "prep_minutes": Schema(type=Schema.Type.NUMBER),
                 "cook_minutes": Schema(type=Schema.Type.NUMBER),
                 "calories_per_person": Schema(type=Schema.Type.NUMBER),
+                "co2_per_person": Schema(type=Schema.Type.NUMBER),
                 "required_tools": Schema(type=Schema.Type.ARRAY, items=Schema(type=Schema.Type.STRING)),
               },
               required=["day", "meal", "title", "summary", "ingredients", "steps"],

@@ -5,14 +5,16 @@ from typing import Any, Dict
 
 
 _TOOL_MODULES: Dict[str, str] = {
-  "recipes": ".recipes",
-  "nutrition": ".nutrition",
-  "household": ".household",
-  "plans": ".plans",
-  "pantry": ".pantry",
-  "calendar": ".calendar_tools",
-  "shopping": ".shopping",
-  "chef": ".chef",
+  "recipes": "ecofood_backend.agent.tools.mcp.recipes",
+  "nutrition": "ecofood_backend.agent.tools.mcp.nutrition",
+  "household": "ecofood_backend.agent.tools.mcp.household",
+  "plans": "ecofood_backend.agent.tools.mcp.plans",
+  "pantry": "ecofood_backend.agent.tools.mcp.pantry",
+  "calendar": "ecofood_backend.agent.tools.mcp.calendar_tools",
+  "shopping": "ecofood_backend.agent.tools.mcp.shopping",
+  "chef": "ecofood_backend.agent.tools.mcp.chef",
+  "memory": "ecofood_backend.agent.tools.mcp.memory",
+  "carbon": "ecofood_backend.agent.tools.mcp.carbon",
 }
 
 

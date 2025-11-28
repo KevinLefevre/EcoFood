@@ -142,10 +142,11 @@ async def delete_week_plan(
   household_id: int = Path(..., gt=0),
   week_start: date = Path(...),
   db: AsyncSession = Depends(get_session),
-) -> None:
+):
   await _ensure_household(db, household_id)
   await meal_plan_service.delete_plan_for_week(db, household_id, week_start)
-  return None
+  return
+
 
 
 @router.patch(

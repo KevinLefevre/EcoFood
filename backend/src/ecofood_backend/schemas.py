@@ -75,6 +75,7 @@ class MealPlanEntryResponse(BaseModel):
   prep_minutes: Optional[int] = None
   cook_minutes: Optional[int] = None
   calories_per_person: Optional[int] = None
+  co2_per_person: Optional[int] = None
   attendee_ids: List[int] = Field(default_factory=list)
   guest_count: int = 0
 
@@ -90,6 +91,7 @@ class MealPlanResponse(BaseModel):
   use_leftovers: bool
   notes: Optional[str] = None
   timeline: Optional[Any] = None
+  stats: Optional[Dict[str, float]] = None
   entries: List[MealPlanEntryResponse] = Field(default_factory=list)
 
   class Config:
@@ -125,6 +127,7 @@ class MealPlanEntryUpdate(BaseModel):
   steps: Optional[List[str]] = None
   attendee_ids: Optional[List[int]] = None
   guest_count: Optional[int] = None
+  co2_per_person: Optional[int] = None
 
 
 class KitchenToolBase(BaseModel):
@@ -253,3 +256,7 @@ class LongTermMemoryResponse(BaseModel):
 
   class Config:
     from_attributes = True
+
+HouseholdResponse.update_forward_refs()
+MealPlanEntryResponse.update_forward_refs()
+MealPlanResponse.update_forward_refs()

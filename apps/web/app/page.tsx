@@ -36,6 +36,7 @@ type MealPlanEntry = {
   prep_minutes?: number | null;
   cook_minutes?: number | null;
   calories_per_person?: number | null;
+  co2_per_person?: number | null;
   attendee_ids?: number[];
   guest_count?: number | null;
 };
@@ -48,6 +49,11 @@ type MealPlan = {
   use_leftovers: boolean;
   notes?: string | null;
   timeline?: AgentTimelineEvent[] | null;
+  stats?: {
+    mean_calories_per_person: number;
+    mean_co2_per_person: number;
+    total_co2_per_person: number;
+  } | null;
   entries: MealPlanEntry[];
 };
 
@@ -1321,7 +1327,24 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
                   : 'Empty week. Plan it with the agents or review a past week.'}
               </p>
             </div>
-            <div className="flex items-center gap-2 text-xs">
+            <div className="flex flex-wrap items-center gap-3 text-xs">
+              {plan?.stats && (
+                <>
+                  <div className="flex items-center gap-1.5 rounded-full bg-emerald-900/30 px-3 py-1.5 border border-emerald-800/50 text-emerald-100">
+                    <span className="text-emerald-400">⚡</span>
+                    {plan.stats.mean_calories_per_person} kcal avg
+                  </div>
+                  <div className="flex items-center gap-1.5 rounded-full bg-emerald-900/30 px-3 py-1.5 border border-emerald-800/50 text-emerald-100">
+                    <span className="text-emerald-400">🌍</span>
+                    {plan.stats.mean_co2_per_person}g CO2 avg
+                  </div>
+                  <div className="flex items-center gap-1.5 rounded-full bg-emerald-900/30 px-3 py-1.5 border border-emerald-800/50 text-emerald-100">
+                    <span className="text-emerald-400">☁️</span>
+                    {Math.round(plan.stats.total_co2_per_person / 1000 * 10) / 10}kg CO2 Total
+                  </div>
+                  <div className="h-4 w-px bg-slate-800 mx-1" />
+                </>
+              )}
               <button
                 onClick={() => shiftWeek(-1)}
                 className="rounded-full border border-slate-700 px-3 py-1.5 text-slate-300 hover:border-cyan-400 hover:text-cyan-100"
@@ -1611,6 +1634,31 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
             </div>
             <div className="mt-4 space-y-4">
               <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+                <h5 className="text-xs uppercase tracking-[0.25em] text-slate-400">Stats</h5>
+                <div className="mt-2 flex flex-wrap gap-3 text-[0.7rem] text-slate-300">
+                  {mealViewer.entry.prep_minutes != null && (
+                    <span className="rounded-full border border-slate-700 px-2 py-0.5">
+                      Prep: {mealViewer.entry.prep_minutes} min
+                    </span>
+                  )}
+                  {mealViewer.entry.cook_minutes != null && (
+                    <span className="rounded-full border border-slate-700 px-2 py-0.5">
+                      Cook: {mealViewer.entry.cook_minutes} min
+                    </span>
+                  )}
+                  {mealViewer.entry.calories_per_person != null && (
+                    <span className="rounded-full border border-slate-700 px-2 py-0.5">
+                      {mealViewer.entry.calories_per_person} kcal / person
+                    </span>
+                  )}
+                  {mealViewer.entry.co2_per_person != null && (
+                    <span className="rounded-full border border-emerald-700/50 text-emerald-100 px-2 py-0.5">
+                      {mealViewer.entry.co2_per_person}g CO2 / person
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
                 <h5 className="text-xs uppercase tracking-[0.25em] text-slate-400">Ingredients</h5>
                 <ul className="mt-3 list-disc space-y-1 pl-4 text-sm text-slate-200">
                   {viewerIngredients.map((ingredient, idx) => (
@@ -1631,23 +1679,6 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
               </div>
               <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
                 <h5 className="text-xs uppercase tracking-[0.25em] text-slate-400">Recipe</h5>
-                <div className="mt-2 flex flex-wrap gap-3 text-[0.7rem] text-slate-300">
-                  {mealViewer.entry.prep_minutes != null && (
-                    <span className="rounded-full border border-slate-700 px-2 py-0.5">
-                      Prep: {mealViewer.entry.prep_minutes} min
-                    </span>
-                  )}
-                  {mealViewer.entry.cook_minutes != null && (
-                    <span className="rounded-full border border-slate-700 px-2 py-0.5">
-                      Cook: {mealViewer.entry.cook_minutes} min
-                    </span>
-                  )}
-                  {mealViewer.entry.calories_per_person != null && (
-                    <span className="rounded-full border border-slate-700 px-2 py-0.5">
-                      {mealViewer.entry.calories_per_person} kcal / person
-                    </span>
-                  )}
-                </div>
                 <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-slate-200">
                   {viewerSteps.map((step, idx) => (
                     <li key={`${idx}-${step.slice(0, 8)}`}>{step}</li>

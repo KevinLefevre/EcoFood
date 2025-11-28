@@ -203,6 +203,30 @@ class PantryReviewAgent(BaseAgent):
     )
 
 
+class CO2EstimatorAgent(BaseAgent):
+  def __init__(self) -> None:
+    super().__init__("co2-estimator", kind="parallel")
+    self._estimate = get_tool_set("carbon")["carbon.estimate-meal"]
+
+  async def run(self, ctx: SessionContext, plan: List[Dict[str, Any]]) -> AgentResult:
+    estimates = []
+    for item in plan:
+      result = await self._estimate(
+        meal_title=item["title"],
+        ingredients=item.get("ingredients", [])
+      )
+      estimates.append({
+        "day": item.get("day"),
+        "meal": item.get("meal"),
+        "co2_per_person": result.get("co2_grams"),
+        "rating": result.get("rating"),
+        "reasoning": result.get("reasoning")
+      })
+    
+    ctx.set("co2_estimates", estimates)
+    return AgentResult(self.name, "plan.review.carbon", {"estimates": estimates})
+
+
 class PlanSynthesisAgent(BaseAgent):
   def __init__(self) -> None:
     super().__init__("plan-synthesizer", kind="sequential")
@@ -215,6 +239,7 @@ class PlanSynthesisAgent(BaseAgent):
     plan: List[Dict[str, Any]],
     nutrition_review: Dict[str, Any],
     pantry_review: Dict[str, Any],
+    carbon_review: Optional[Dict[str, Any]] = None,
   ) -> AgentResult:
     def format_ingredient(ingredient: Dict[str, Any]) -> str:
       parts: List[str] = []
@@ -243,6 +268,24 @@ class PlanSynthesisAgent(BaseAgent):
       plan_items.append({"name": item["title"], "ingredients": raw_ingredients})
     shopping = self._shopping(plan_items)
 
+    # Merge CO2 data back into plan items
+    carbon_estimates = (carbon_review or {}).get("estimates", [])
+    # Create a map for easy lookup: (day, meal) -> estimate
+    co2_map = {
+        (est.get("day"), est.get("meal")): est 
+        for est in carbon_estimates
+    }
+
+    merged_plan = []
+    for item in plan:
+        key = (item.get("day"), item.get("meal"))
+        est = co2_map.get(key)
+        new_item = item.copy()
+        if est and est.get("co2_per_person"):
+            new_item["co2_per_person"] = est.get("co2_per_person")
+            # We could also add rating/reasoning if the UI supported it
+        merged_plan.append(new_item)
+
     events = [
       {
         "title": f"{item['day']} – {item['title']}",
@@ -250,18 +293,44 @@ class PlanSynthesisAgent(BaseAgent):
         "description": (
           f"{item.get('summary', 'Meal')} | prep {item.get('prep_minutes') or '?'} min · "
           f"cook {item.get('cook_minutes') or '?'} min · "
-          f"{item.get('calories_per_person') or '?'} kcal/person"
+          f"{item.get('calories_per_person') or '?'} kcal/person · "
+          f"{item.get('co2_per_person') or '?'}g CO2/person"
         ),
       }
-      for idx, item in enumerate(plan)
+      for idx, item in enumerate(merged_plan)
     ]
     calendar = self._calendar(events)
 
+    # Calculate weekly stats
+    total_cals = 0
+    count_cals = 0
+    total_co2 = 0
+    count_co2 = 0
+
+    for item in merged_plan:
+      cals = item.get("calories_per_person")
+      if cals:
+        total_cals += cals
+        count_cals += 1
+      
+      co2 = item.get("co2_per_person")
+      if co2:
+        total_co2 += co2
+        count_co2 += 1
+    
+    stats = {
+      "mean_calories_per_person": round(total_cals / count_cals) if count_cals > 0 else 0,
+      "mean_co2_per_person": round(total_co2 / count_co2) if count_co2 > 0 else 0,
+      "total_co2_per_person": round(total_co2)
+    }
+
     final_plan = {
-      "plan": plan,
+      "plan": merged_plan,
+      "stats": stats,
       "reviews": {
         "nutrition": nutrition_review,
         "pantry": pantry_review,
+        "carbon": carbon_review,
       },
       "shopping_list": shopping,
       "calendar": calendar,

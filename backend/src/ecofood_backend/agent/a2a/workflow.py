@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from .agents import (
   ChefCurationAgent,
+  CO2EstimatorAgent,
   HouseholdProfilerAgent,
   MealArchitectAgent,
   NutritionReviewAgent,
@@ -47,6 +48,7 @@ class MealPlanningWorkflow:
     self.chef_agent = ChefCurationAgent()
     self.nutrition_agent = NutritionReviewAgent()
     self.pantry_agent = PantryReviewAgent()
+    self.co2_agent = CO2EstimatorAgent()
     self.synthesis_agent = PlanSynthesisAgent()
     self._logger = logging.getLogger(__name__)
 
@@ -136,7 +138,7 @@ class MealPlanningWorkflow:
 
       plan_items = chef_result.payload["plan"]
 
-      # Parallel phase: nutrition + pantry reviewers evaluate the same plan.
+      # Parallel phase: nutrition + pantry + carbon reviewers evaluate the same plan.
       nutrition_inputs = self._describe_inputs(plan=plan_items)
       self._logger.info("[Workflow] %s input=%s", self.nutrition_agent.name, nutrition_inputs)
       pantry_inputs = self._describe_inputs(
@@ -145,6 +147,8 @@ class MealPlanningWorkflow:
         use_leftovers=request.use_leftovers,
       )
       self._logger.info("[Workflow] %s input=%s", self.pantry_agent.name, pantry_inputs)
+      carbon_inputs = self._describe_inputs(plan=plan_items)
+      self._logger.info("[Workflow] %s input=%s", self.co2_agent.name, carbon_inputs)
 
       async with asyncio.TaskGroup() as tg:
         nutrition_task = tg.create_task(
@@ -158,13 +162,22 @@ class MealPlanningWorkflow:
             use_leftovers=request.use_leftovers,
           )
         )
+        carbon_task = tg.create_task(
+          self.co2_agent.run(ctx, plan=plan_items)
+        )
       
-      review_results = [nutrition_task.result(), pantry_task.result()]
+      review_results = [nutrition_task.result(), pantry_task.result(), carbon_task.result()]
       for review in review_results:
+        inputs = nutrition_inputs
+        if review.agent == self.pantry_agent.name:
+            inputs = pantry_inputs
+        elif review.agent == self.co2_agent.name:
+            inputs = carbon_inputs
+        
         self._log_agent(
           review,
           0.0,
-          nutrition_inputs if review.agent == self.nutrition_agent.name else pantry_inputs,
+          inputs,
           trace,
         )
 
@@ -174,12 +187,16 @@ class MealPlanningWorkflow:
       pantry_payload = next(
         res.payload for res in review_results if res.stage == "plan.review.pantry"
       )
+      carbon_payload = next(
+        res.payload for res in review_results if res.stage == "plan.review.carbon"
+      )
 
       # Sequential phase 3: synthesis agent merges everything.
       synthesis_inputs = self._describe_inputs(
         plan=plan_items,
         nutrition_review=nutrition_payload["analysis"],
         pantry_review=pantry_payload,
+        carbon_review=carbon_payload,
       )
       self._logger.info("[Workflow] %s input=%s", self.synthesis_agent.name, synthesis_inputs)
       synthesis_timer = time.perf_counter()
@@ -188,6 +205,7 @@ class MealPlanningWorkflow:
         plan=plan_items,
         nutrition_review=nutrition_payload["analysis"],
         pantry_review=pantry_payload,
+        carbon_review=carbon_payload,
       )
       self._log_agent(final_result, time.perf_counter() - synthesis_timer, synthesis_inputs, trace)
 

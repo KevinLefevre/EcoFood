@@ -140,6 +140,7 @@ class MealPlanEntry(Base):
   prep_minutes: Mapped[int | None] = mapped_column(Integer)
   cook_minutes: Mapped[int | None] = mapped_column(Integer)
   calories_per_person: Mapped[int | None] = mapped_column(Integer)
+  co2_per_person: Mapped[int | None] = mapped_column(Integer)
   attendee_ids: Mapped[list | None] = mapped_column(JSON)
   guest_count: Mapped[int] = mapped_column(Integer, default=0)
 
