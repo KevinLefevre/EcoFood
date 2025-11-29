@@ -24,7 +24,7 @@ Defined in `backend/src/ecofood_backend/agent/a2a/agents.py`.
 1.  **Household Profiler** (`sequential`, `rule-based`):
     -   **Role**: Condenses raw household member data (allergies, likes) into a structured profile string.
     -   **Implementation**: Deterministic logic; returns `model: "rule-based"`.
-2.  **Meal Architect** (`sequential`, `gemini-2.0-flash`):
+2.  **Meal Architect** (`sequential`, `gemini-2.5-pro`):
     -   **Role**: Uses an LLM to generate the initial weekly meal plan based on the profile.
     -   **Implementation**: Calls `chef.plan-week` tool.
 3.  **Chef Curator** (`sequential`, `rule-based`):
@@ -57,7 +57,7 @@ The system leverages Google's Gemini models for intelligence.
 
 -   **Models Used**:
     -   `gemini-2.0-flash`: For high-speed, low-latency tasks (e.g., initial planning).
-    -   `gemini-1.5-pro`: For complex reasoning tasks (optional configuration).
+    -   `gemini-2.5-pro`: For complex reasoning tasks (optional configuration).
 -   **Resilience**: Custom `GeminiClient` handles rate limits (`429`) and retries automatically.
 -   **Visibility**: The UI explicitly shows which model was used for each step (e.g., "Generated via gemini-2.0-flash" or "Rule-based").
 

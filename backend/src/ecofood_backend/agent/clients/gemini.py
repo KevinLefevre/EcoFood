@@ -97,7 +97,7 @@ def _get_model_for_task(task_type: str = "default"):
       )
   else:
     # Default/Fast model for profiling, reviews, etc.
-    model_name = os.getenv("GEMINI_FAST_TASK_MODEL", "gemini-1.5-flash")
+    model_name = os.getenv("GEMINI_FAST_TASK_MODEL", "gemini-2.0-flash")
     temperature = float(os.getenv("GEMINI_FAST_TEMP", "0.4"))
     max_tokens = int(os.getenv("GEMINI_FAST_MAX_TOKENS", "2048"))
     response_schema = None
