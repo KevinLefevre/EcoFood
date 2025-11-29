@@ -149,4 +149,17 @@ For a detailed breakdown of every feature, see the [Full Feature Documentation](
 
 ---
 
-*Built with ❤️ for the planet. Let's use AI for good and responsibly🌍*
+*Built with ❤️ for the planet.*
+
+---
+
+## 🔮 Future Improvements
+
+We have an exciting roadmap to further enhance EcoFood's capabilities:
+
+-   **Expanded MCP Integration**: Adding more tools to the registry, such as direct integration with smart fridge APIs and grocery delivery services.
+-   **Local Online Store Connection**: Enabling the agent to not just plan meals but also populate carts on local grocery store platforms (e.g., Instacart, Amazon Fresh) for one-click ordering.
+-   **A2P (Agent-to-Person) Protocol**: Implementing proactive communication where the agent can reach out via SMS or email to suggest meal prep steps or remind you of expiring ingredients.
+-   **Nutritional Balance Coach**: A long-term health tracking agent that monitors your weekly intake and suggests adjustments for a balanced diet.
+-   **Community Recipe Exchange**: Allowing households to share their favorite AI-optimized recipes with the wider EcoFood community.
+...
