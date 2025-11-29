@@ -214,6 +214,7 @@ class Session(Base):
   last_active_at: Mapped[datetime] = mapped_column(
     DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
   )
+  summary: Mapped[str | None] = mapped_column(Text, nullable=True)
 
   household: Mapped[Household] = relationship(back_populates="sessions")
   messages: Mapped[List["SessionMessage"]] = relationship(

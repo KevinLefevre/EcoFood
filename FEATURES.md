@@ -115,4 +115,14 @@ The project implements the Model Context Protocol in two distinct ways:
         -   **Host** (`mcp/host.py`): An `McpHost` instance that registers the server and creates a client.
         -   **Client**: The agent uses this client to call the tool, demonstrating a decoupled, protocol-compliant architecture that could easily be moved to a remote server.
 
+## 9. Context Compaction
+**Implementation**: `backend/src/ecofood_backend/services/session_service.py` & `agent/tools/mcp/summarizer.py`
+
+To manage the LLM's context window effectively during long conversations:
+
+-   **Automatic Summarization**: When a chat session exceeds a certain length (e.g., 10 messages), the system triggers a background summarization task.
+-   **Summarizer Tool**: A specialized `summarizer.summarize-chat` tool uses a fast LLM (`gemini-2.0-flash`) to condense the conversation history into a concise summary.
+-   **Context Injection**: This summary is stored in the `Session` table and injected into the prompt of subsequent agent calls, allowing the agent to retain context without re-processing the entire history.
+
+
 

@@ -62,6 +62,10 @@ async def chat_with_planner(
             if session:
                 # Save user message
                 await session_service.add_message(db, session.id, "user", request.message)
+                
+                # Trigger compaction check
+                # We do this asynchronously or just await it (it's fast enough usually)
+                await session_service.check_and_compact(db, session.id)
 
                 # Get full history
                 history_objs = await session_service.get_history(db, session.id)
@@ -69,6 +73,12 @@ async def chat_with_planner(
                 chat_history = [
                     {"role": m.role, "content": m.content} for m in history_objs
                 ]
+                
+                # Get summary if available
+                if session.summary:
+                    # We can prepend it to memories or pass it explicitly
+                    # Let's pass it explicitly to chef_chat_analysis
+                    pass
 
                 # Get memories
                 if request.household_id:
@@ -82,6 +92,7 @@ async def chat_with_planner(
             chat_history=chat_history,
             user_message=request.message,
             memories=memories,
+            summary=session.summary if session else None,
         )
 
         if session:

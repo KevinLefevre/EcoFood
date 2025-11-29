@@ -50,6 +50,7 @@ async def init_db() -> None:
     await conn.run_sync(_ensure_meal_plan_entry_columns)
     await conn.run_sync(_ensure_household_member_columns)
     await conn.run_sync(_ensure_planning_job_columns)
+    await conn.run_sync(_ensure_session_columns)
 
 
 def _ensure_meal_plan_entry_columns(sync_conn) -> None:
@@ -163,3 +164,25 @@ def _ensure_planning_job_columns(sync_conn) -> None:
     "ALTER TABLE planning_jobs ADD COLUMN mood INTEGER",
     "ALTER TABLE planning_jobs ADD COLUMN mood INTEGER",
   )
+
+
+def _ensure_session_columns(sync_conn) -> None:
+  inspector = inspect(sync_conn)
+  if "sessions" not in inspector.get_table_names():
+    return
+
+  existing = {column["name"] for column in inspector.get_columns("sessions")}
+  dialect = sync_conn.dialect.name
+
+  def add_column(name: str, ddl_postgres: str, ddl_default: str) -> None:
+    if name in existing:
+      return
+    statement = ddl_postgres if dialect == "postgresql" else ddl_default
+    sync_conn.execute(text(statement))
+
+  add_column(
+    "summary",
+    "ALTER TABLE sessions ADD COLUMN summary TEXT",
+    "ALTER TABLE sessions ADD COLUMN summary TEXT",
+  )
+

@@ -671,6 +671,7 @@ async def chef_chat_analysis(
     chat_history: List[Dict[str, str]],
     user_message: str,
     memories: Optional[List[str]] = None,
+    summary: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Analyzes the chat conversation to determine if the agent has enough information
@@ -679,6 +680,10 @@ async def chef_chat_analysis(
     memories_text = ""
     if memories:
         memories_text = "Long-Term Memories (User Preferences/Facts):\n" + "\n".join(f"- {m}" for m in memories)
+        
+    summary_text = ""
+    if summary:
+        summary_text = f"Previous Conversation Summary:\n{summary}\n"
 
     prompt = f"""
     You are a helpful and creative chef assistant. You are helping a user modify a specific meal in their plan.
@@ -687,6 +692,8 @@ async def chef_chat_analysis(
     {json.dumps(current_plan, indent=2)}
 
     {memories_text}
+    
+    {summary_text}
 
     Chat History:
     {json.dumps(chat_history, indent=2)}

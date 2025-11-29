@@ -15,6 +15,7 @@ _TOOL_MODULES: Dict[str, str] = {
   "chef": "ecofood_backend.agent.tools.mcp.chef",
   "memory": "ecofood_backend.agent.tools.mcp.memory",
   "carbon": "ecofood_backend.agent.tools.mcp.carbon",
+  "summarizer": "ecofood_backend.agent.tools.mcp.summarizer",
 }
 
 
