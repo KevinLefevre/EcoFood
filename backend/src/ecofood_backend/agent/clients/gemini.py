@@ -97,7 +97,7 @@ def _get_model_for_task(task_type: str = "default"):
       )
   else:
     # Default/Fast model for profiling, reviews, etc.
-    model_name = os.getenv("GEMINI_FAST_TASK_MODEL", "gemini-2.0-flash-exp")
+    model_name = os.getenv("GEMINI_FAST_TASK_MODEL", "gemini-1.5-flash")
     temperature = float(os.getenv("GEMINI_FAST_TEMP", "0.4"))
     max_tokens = int(os.getenv("GEMINI_FAST_MAX_TOKENS", "2048"))
     response_schema = None
@@ -228,10 +228,15 @@ async def _generate_with_observability(model, model_name, prompt, timeout):
 
 
 def _process_response(response, model_name) -> dict[str, str]:
-  text = getattr(response, "text", None)
+  try:
+    text = response.text
+  except Exception:
+    text = None
+
   finish_reason = None
   try:
-    finish_reason = response.candidates[0].finish_reason  # type: ignore[attr-defined]
+    if hasattr(response, "candidates") and response.candidates:
+      finish_reason = response.candidates[0].finish_reason
   except Exception:
     finish_reason = None
 
@@ -244,7 +249,18 @@ def _process_response(response, model_name) -> dict[str, str]:
     text = "\n".join(part for part in parts if part).strip()
     
   if not text:
-    raise GeminiClientError("Gemini returned an empty response.")
+    # Log detailed info for debugging
+    safety_ratings = "Unknown"
+    try:
+        if hasattr(response, "candidates") and response.candidates:
+            safety_ratings = str(response.candidates[0].safety_ratings)
+        elif hasattr(response, "prompt_feedback"):
+            safety_ratings = str(response.prompt_feedback)
+    except Exception:
+        pass
+        
+    logger.error(f"Gemini empty response. Finish reason: {finish_reason}. Safety: {safety_ratings}")
+    raise GeminiClientError(f"Gemini returned an empty response. Reason: {finish_reason}")
   # Strict JSON validation: raise if invalid after a single salvage attempt.
   try:
     json.loads(text)

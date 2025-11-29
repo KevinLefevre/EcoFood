@@ -59,6 +59,7 @@ async def carbon_estimate_meal(
                 "co2_grams": data.get("co2_grams"),
                 "rating": data.get("rating"),
                 "reasoning": data.get("reasoning"),
+                "model": response.get("model"),
             }
         else:
             logger.error(f"Could not parse JSON from carbon estimate: {text}")

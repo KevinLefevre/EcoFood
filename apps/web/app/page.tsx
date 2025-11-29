@@ -373,7 +373,12 @@ function CalendarTab({ apiBaseUrl }: CalendarTabProps) {
   const entriesBySlot = useMemo(() => {
     const map = new Map<string, MealPlanEntry>();
     plan?.entries.forEach((entry) => {
-      const key = `${isoDayLabel(entry.day)}-${entry.slot}`;
+      // If entry.day is already a day name (e.g. "Mon"), use it.
+      // Otherwise, parse it as an ISO date.
+      const dayLabel = DAY_ORDER.includes(entry.day)
+        ? entry.day
+        : isoDayLabel(entry.day);
+      const key = `${dayLabel}-${entry.slot}`;
       map.set(key, entry);
     });
     return map;
@@ -2069,7 +2074,7 @@ function TimelineCard({
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-[0.6rem] uppercase tracking-[0.25em] text-slate-500">
-            {meta ? 'LLM A2A agent' : 'Agent'}
+            {meta ? 'A2A agent' : 'Agent'}
           </p>
           <p className="text-base font-semibold tracking-tight text-slate-50">
             {agentLabel}
@@ -2259,6 +2264,10 @@ function buildTimelineDetails(event: AgentTimelineEvent): string[] {
             `Top cravings detected: ${formatInlineList(likes, 4)}.`
           );
         }
+        const model = typeof payload.model === 'string' ? payload.model : null;
+        if (model) {
+          lines.push(`Profile generated via ${model}.`);
+        }
       }
       break;
     }
@@ -2301,7 +2310,12 @@ function buildTimelineDetails(event: AgentTimelineEvent): string[] {
       }
       const source = typeof payload.source === 'string' ? payload.source : null;
       if (source === 'gemini') {
-        lines.push('Plan generated via Gemini culinary model.');
+        const llm = payload.llm as { model?: string } | undefined;
+        const model =
+          typeof llm?.model === 'string'
+            ? llm.model
+            : 'Gemini culinary model';
+        lines.push(`Plan generated via ${model}.`);
       } else if (source === 'fallback') {
         lines.push('Fallback static recipe rotation was used.');
       }
@@ -2322,6 +2336,10 @@ function buildTimelineDetails(event: AgentTimelineEvent): string[] {
       }
       if (typeof payload.menu_story === 'string' && payload.menu_story.trim()) {
         lines.push(payload.menu_story.trim());
+      }
+      const model = typeof payload.model === 'string' ? payload.model : null;
+      if (model) {
+        lines.push(`Curated via ${model}.`);
       }
       break;
     }
@@ -2365,6 +2383,17 @@ function buildTimelineDetails(event: AgentTimelineEvent): string[] {
           : [];
         if (labels.length) {
           lines.push(`Nutrition tags: ${labels.join(', ')}.`);
+        }
+      }
+      break;
+    }
+    case 'plan.review.carbon': {
+      const estimates = Array.isArray(payload.estimates) ? payload.estimates : [];
+      if (estimates.length) {
+        lines.push(`Carbon estimator analyzed ${estimates.length} meals.`);
+        const firstModel = (estimates[0] as any)?.model;
+        if (typeof firstModel === 'string') {
+          lines.push(`Estimates generated via ${firstModel}.`);
         }
       }
       break;
@@ -2489,7 +2518,7 @@ const AGENT_TIMELINE_REGISTRY: Record<string, AgentTimelineMeta> = {
     label: 'Household profiler',
     kind: 'sequential',
     description:
-      'LLM condenses members and dietary notes into a structured profile.',
+      'Deterministic logic condenses members and dietary notes into a structured profile.',
     inputs: ['members (names, roles, allergens, likes)'],
     outputs: ['profile.member_count', 'profile.allergens', 'profile.top_likes']
   },

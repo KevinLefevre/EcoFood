@@ -52,7 +52,7 @@ class HouseholdProfilerAgent(BaseAgent):
       profile_cache.set(members, profile)
       
     ctx.set("household_profile", profile)
-    return AgentResult(self.name, "profile.ready", {"profile": profile})
+    return AgentResult(self.name, "profile.ready", {"profile": profile, "model": "rule-based"})
 
 
 class MealArchitectAgent(BaseAgent):
@@ -220,7 +220,8 @@ class CO2EstimatorAgent(BaseAgent):
         "meal": item.get("meal"),
         "co2_per_person": result.get("co2_grams"),
         "rating": result.get("rating"),
-        "reasoning": result.get("reasoning")
+        "reasoning": result.get("reasoning"),
+        "model": result.get("model"),
       })
     
     ctx.set("co2_estimates", estimates)

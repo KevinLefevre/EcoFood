@@ -118,6 +118,7 @@ def chef_build_menu(
     "plan": curated_plan,
     "themes": story_snippets,
     "menu_story": menu_story,
+    "model": "rule-based",  # chef_build_menu is deterministic
   }
 
 
@@ -432,12 +433,21 @@ FEW-SHOT EXAMPLES (follow structure, return all three meals for the day):
     )
   )
 
+  # Extract model name from the first successful response
+  model_name = "gemini-hybrid"
+  for result in results:
+      if isinstance(result, tuple) and len(result) == 2:
+          _, response = result
+          if isinstance(response, dict) and response.get("model"):
+              model_name = response.get("model")
+              break
+
   combined_prompt = "\n\n".join(f"[{key}]\n{prompt}" for key, prompt in meal_prompts.items())
   combined_raw = "\n\n".join(f"[{key}]\n{text}" for key, text in meal_raw.items())
 
   return {
     "plan": combined_plan,
-    "model": "gemini-hybrid",
+    "model": model_name,
     "prompt": combined_prompt,
     "raw_text": combined_raw,
     "prompt_map": meal_prompts,

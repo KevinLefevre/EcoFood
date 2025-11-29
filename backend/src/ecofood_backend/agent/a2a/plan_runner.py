@@ -279,13 +279,20 @@ async def _execute_planning(job_id: int) -> None:
       # ... (Simplified fallback logic could go here, or just return error if empty)
       return {"day": day, "status": "error", "error": "No meals generated for day"}
 
+    # Extract model name from timeline if available
+    model_name = "unknown"
+    for event in result.get("timeline", []):
+      if event.get("stage") == "plan.candidate":
+        model_name = event.get("payload", {}).get("llm", {}).get("model", "unknown")
+        break
+
     async with AsyncSessionFactory() as db_session:
       await plan_job_service.add_event(
         db_session,
         job_id,
         stage="planned",
-        message=f"{day} planned",
-        payload={"day": day, "entries": day_entries, "phase": "complete"},
+        message=f"{day} planned using {model_name}",
+        payload={"day": day, "entries": day_entries, "phase": "complete", "model": model_name},
       )
 
     return {
