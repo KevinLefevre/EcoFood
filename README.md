@@ -1,183 +1,152 @@
-# EcoFood
+# EcoFood: AI Concierge for Sustainable Eating
 
-EcoFood is an AI-assisted meal planner that helps households eat healthier and more diversified meals.  
-It plans meals on a calendar while remembering each household’s preferences, tastes, and allergens.
+**EcoFood** is an agentic AI platform that acts as your personal **Concierge Agent** for sustainable eating. It serves as your executive chef and sustainability consultant, helping households eat better while reducing their carbon footprint.
 
-## Overview
+Unlike static recipe apps, EcoFood orchestrates a team of specialized AI agents—from a "Meal Architect" to a "Carbon Estimator"—to generate dynamic, personalized meal plans that respect your dietary needs, use up your leftovers, and optimize for the lowest environmental impact.
 
-The app focuses on:
-- Calendar-based meal planning (daily / weekly view)
-- Household memory (who lives there, typical meals, pantry staples)
-- Preference-aware suggestions (tastes, cuisines, dislikes)
-- Allergen- and restriction-safe menus
+---
 
-The goal is to make it easy to eat better, reduce repetition, and gently nudge people toward more varied, balanced food choices.
+## 🏆 Kaggle Submission
 
-See `FEATURES.md` for the capstone / agent-system feature set.
+This project is submitted for the **Google AI Agents Intensive Capstone**.
 
-## Tech Stack
+### [Category 1: The Pitch](./kaggle_submission/Category1_The_Pitch.md)
+> **"The Why"**: Read about the problem we're solving, our dual sustainability goals (Food CO2 + AI Compute), and the developer's journey.
 
-- Web app (UI): Next.js + React + TypeScript (npm) in `apps/web`
-- Styling: Tailwind CSS with a dark, futuristic, responsive design
-- Backend: Python (FastAPI) multi-agent / AI service in `backend` managed via `uv`
+### [Category 2: The Implementation](./kaggle_submission/Category2_The_Implementation.md)
+> **"The How"**: Deep dive into the Agent-to-Agent (A2A) architecture, Model Context Protocol (MCP) integration, and our custom Context Compaction memory system.
 
-## Agent Workflow
+### [Full Feature Documentation](./FEATURES.md)
+> **"The What"**: A detailed checklist of the full agentic features demonstrating the capstone project capabilities, from the Household Profiler to the Real-time Carbon Scoring.
 
-EcoFood orchestrates specialized agents using an Agent-to-Agent (A2A) workflow:
+---
 
-- Sequential phase:
-  1. **Household profiler** normalizes members/allergens/preferences.
-  2. **Meal architect** drafts a weekly plan via MCP tools (`recipes.search`, `plans.save-and-tag`). Optimized to generate full days (3 meals) in parallel batches.
-- Parallel phase:
-  - **Nutrition reviewer** analyzes the draft via `nutrition.analyze`.
-  - **Pantry reviewer** suggests leftover usage via `pantry.suggest-usage`.
-- Final sequential phase:
-  - **Plan synthesizer** merges reviews, generates a shopping list (`shopping-list.generate`), and exports a calendar (`calendar.export-ics`).
+## 🏗️ Architecture
 
-The workflow is exposed through the `/plans/generate` endpoint.
+EcoFood is built on a modern, scalable stack designed for resilience and observability.
+
+-   **Frontend**: Next.js (React) with Server-Sent Events (SSE) for real-time agent feedback.
+-   **Backend**: Python FastAPI service managing the agent workflow.
+-   **AI Engine**: Google Gemini (Flash 2.0 & Pro 2.5) via a custom resilient client.
+-   **Orchestration**: A custom Directed Acyclic Graph (DAG) engine manages the lifecycle of meal planning jobs.
+
+### Agent Workflow
+The system uses an **Agent-to-Agent (A2A)** pattern where specialized agents collaborate to build the final plan.
 
 ```mermaid
 graph TD
-  A[Household Profiler<br/>Sequential] --> B[Meal Architect<br/>Sequential]
-  B --> C1[Nutrition Reviewer<br/>Parallel]
-  B --> C2[Pantry Reviewer<br/>Parallel]
-  C1 --> D[Plan Synthesizer<br/>Sequential]
-  C2 --> D
-  D --> E[Shopping List<br/>shopping-list.generate]
-  D --> F[Calendar Export<br/>calendar.export-ics]
-  D --> G[Final Plan + Timeline]
+  subgraph User Context
+    HP[Household Profiler]
+  end
+
+  subgraph "Sequential Planning (Gemini 2.5 Pro)"
+    HP --> MA[Meal Architect]
+    MA --> CC[Chef Curator]
+  end
+
+  subgraph "Parallel Review (Gemini 2.0 Flash)"
+    CC --> NR[Nutrition Reviewer]
+    CC --> PR[Pantry Reviewer]
+    CC --> CE[Carbon Estimator]
+  end
+
+  subgraph Synthesis
+    NR --> PS[Plan Synthesizer]
+    PR --> PS
+    CE --> PS
+    PS --> SL[Shopping List]
+    PS --> Cal[Calendar Export]
+  end
+
+  User((User)) --> HP
+  PS --> User
 ```
 
-## Interactive Planner Chat
+---
 
-EcoFood features a "conversation-first" planner chat that allows users to refine meals interactively:
+## 🚀 Getting Started
 
-1.  **Context-Aware**: The agent knows which meal you are editing (Day, Slot, Current Recipe).
-2.  **Conversational Refinement**: Ask for changes naturally (e.g., "Make this vegan," "Swap chicken for tofu," "Add a side salad").
-3.  **Ready-to-Update State**: The agent analyzes your request and indicates when it has enough information to proceed.
-4.  **In-Place Execution**: Once confirmed, the agent generates fully detailed updates (including ingredients and steps) that are applied directly to the meal editor.
+### Prerequisites
+1.  **Gemini API Key**: Get one from [Google AI Studio](https://aistudio.google.com/).
+2.  **Docker**: Ensure Docker Desktop is installed and running.
 
+### Option 1: Docker Desktop (Recommended)
+This is the primary development environment.
 
-## Concepts & Roadmap
+1.  **Clone the repository**:
+    ```bash
+    git clone <repo-url>
+    cd EcoFood
+    ```
 
-- Nutritional balance coach: weekly nutrition scores and gentle suggestions for healthier swaps.
-- Exploration mode: regularly propose “new-to-you” recipes to expand cuisines, ingredients, and techniques.
-- Leftover- and pantry-aware planning: suggest meals that use what you already have and reduce food waste.
-- Budget & season-aware planning: keep to a budget while favoring seasonal, local ingredients when possible.
+2.  **Configure Environment**:
+    Create a `.env` file in the root directory:
+    ```env
+    # Required: Google Gemini API Key
+    GEMINI_API_KEY=your_key_here
 
-## Setup
+    # Optional: Configure Models
+    # Used for complex reasoning (Meal Architect) - Default: gemini-2.5-pro
+    GEMINI_COMPLEX_TASK_MODEL=gemini-2.5-pro
+    # Used for fast tasks (Tools, Summarizer) - Default: gemini-2.0-flash
+    GEMINI_FAST_TASK_MODEL=gemini-2.0-flash
 
-1. Create a Gemini API key (from Google AI Studio or equivalent).
-2. Expose it to the app, for example via environment variable:
-   - `GEMINI_API_KEY=your_gemini_key_here`
-- **Paid tier upgrade**: set `GEMINI_COMPLEX_TASK_MODEL=gemini-2.5-pro` (or another paid‑tier model) to lift the default rate limits and enable higher request throughput.
-- `LANGFUSE_PUBLIC_KEY=...` (optional)
-- `LANGFUSE_SECRET_KEY=...` (optional)
-3. (Optional) Create Langfuse keys if you want observability / analytics:
-   - `LANGFUSE_PUBLIC_KEY=...`
-   - `LANGFUSE_SECRET_KEY=...`
-   - `LANGFUSE_BASE_URL=...` (points to the Langfuse UI; defaults to `http://localhost:3001` when self-hosted)
-   - When running the bundled Langfuse stack add secrets for `LANGFUSE_NEXTAUTH_SECRET`, `LANGFUSE_ENCRYPTION_KEY`, and `LANGFUSE_SALT` in your `.env` file.
-4. (Optional) To self-host Langfuse locally, run `docker compose up` and visit `http://localhost:3100`. We currently run `langfuse/langfuse:2` plus a minimal Postgres service (`langfuse-db`). The compose file provides safe defaults for `NEXTAUTH_SECRET`, `SALT`, and `ENCRYPTION_KEY`, so you can get started without editing `.env`; when we need the full ingestion pipeline (ClickHouse, worker, etc.) we can switch back to the newer stack and override the `LANGFUSE_*` secrets. After the DB starts, run the Prisma migrations once so Langfuse’s views exist:
+    # Optional: Langfuse Observability
+    # 1. Create a project at https://langfuse.com (or self-host)
+    # 2. Get your public/secret keys
+    # 3. Add them here and restart docker compose
+    LANGFUSE_PUBLIC_KEY=pk-lf-...
+    LANGFUSE_SECRET_KEY=sk-lf-...
+    LANGFUSE_HOST_URL=https://cloud.langfuse.com # or http://localhost:3000 if self-hosted
+    ```
 
-   ```bash
-   docker compose exec langfuse sh -c \
-     'cd /app && pnpm prisma migrate deploy --schema packages/shared/prisma/schema.prisma'
-   ```
+3.  **Run the App**:
+    ```bash
+    docker compose up --build
+    ```
 
-   (Answer `Y` the first time Corepack downloads pnpm.)
+4.  **Access the App**:
+    Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-   Example output from a successful run:
+### Option 2: Google Kubernetes Engine (GKE) (Beta)
+For production-grade scalability, the project includes a full Kubernetes deployment configuration.
 
-   ```bash
-   kuku@Kulssigaming:~/projects/EcoFood$ docker compose exec langfuse sh -c \
-     'cd /app && pnpm prisma migrate deploy --schema packages/shared/prisma/schema.prisma'
-   ! Corepack is about to download https://registry.npmjs.org/pnpm/-/pnpm-9.5.0.tgz
-   ? Do you want to continue? [Y/n] Y
+> **Note**: This requires a Google Cloud project with GKE enabled.
 
-   Prisma schema loaded from packages/shared/prisma/schema.prisma
-   Datasource "db": PostgreSQL database "langfuse", schema "public" at "langfuse-db:5432"
+1.  **Navigate to Deployment**:
+    ```bash
+    cd GKE_deployment
+    ```
 
-   271 migrations found in prisma/migrations
+2.  **Follow Instructions**:
+    See the [GKE README](./GKE_deployment/README.md) for detailed steps on setting up the cluster, secrets, and deploying the manifests.
 
-   
-   No pending migrations to apply.
-   kuku@Kulssigaming:~/projects/EcoFood$
-   ```
+---
 
-   Recent Langfuse releases drop the lightweight Postgres-only views during later migrations, so recreate them after the command above:
+## 🧩 Capstone Implementation Checklist
 
-   ```bash
-   docker compose exec langfuse-db psql -U langfuse -d langfuse -f docker/langfuse/create_views.sql
-   ```
+For a detailed breakdown of every feature, see the [Full Feature Documentation](./FEATURES.md).
 
-   This installs `observations_view` and `traces_view`, which power the UI dashboards and Prisma aggregations.
+- [x] **Multi-agent system**, including any combination of:
+    - [x] Agent powered by an LLM
+    - [x] Parallel agents
+    - [x] Sequential agents
+    - [ ] Loop agents
+- [x] **Tools**, including:
+    - [x] MCP
+    - [x] custom tools
+    - [ ] built-in tools, such as Google Search or Code Execution
+    - [ ] OpenAPI tools
+    - [ ] Long-running operations (pause/resume agents)
+- [x] **Sessions & Memory**
+    - [x] Sessions & state management (e.g. InMemorySessionService)
+    - [x] Long term memory (e.g. Memory Bank)
+- [x] **Context engineering** (e.g. context compaction)
+- [x] **Observability**: Logging, Tracing, Metrics
+- [ ] **Agent evaluation**
+- [x] **A2A Protocol**
+- [x] **Agent deployment**
 
-How you load these (e.g. `.env` file, secrets manager, or deployment config) depends on the stack you use; just ensure the app can read the variables above.
+---
 
-## Project Structure
-
-- `apps/web` – Next.js frontend (npm, TypeScript, Tailwind)
-- `backend` – Python backend (FastAPI, uv-managed)
-- `FEATURES.md` – Capstone feature checklist
-- `ROADMAP.md` – High-level phases and milestones
-- `LICENSE` – Project license
-
-## Running the Project
-
-### Web app (npm)
-
-From `apps/web`:
-
-```bash
-npm install
-npm run dev
-```
-
-Then open `http://localhost:3000`.
-
-### Backend (uv)
-
-From `backend`:
-
-```bash
-uv sync
-uv run ecofood-backend
-```
-
-The backend will be available on `http://localhost:8000` (health check at `/health`).
-
-## Household Management & Assistant
-
-- `GET /households` – list all households with their members.
-- `POST /households` – create a household (the UI auto-creates “My household” for you).
-- `POST /households/{household_id}/members` – add a member (name, role, allergens, preferences).
-- `DELETE /households/{household_id}/members/{member_id}` – remove a member.
-- `POST /households/{household_id}/assistant` – dialog agent that walks through questions and saves the result to SQL.
-
-The Household tab now consumes these endpoints: it loads empty by default, supports add/remove buttons, and the “Use assistant” button opens the dialog agent to capture allergens and taste preferences.
-
-### Generating a Plan via API
-
-```bash
-curl -X POST http://localhost:8000/plans/generate \
-  -H "Content-Type: application/json" \
-  -d '{
-    "session_id": "demo-session",
-    "members": [
-      {"name": "Alex", "role": "Adult", "allergens": ["peanuts"], "likes": ["mediterranean"]},
-      {"name": "Mia", "role": "Child", "likes": ["pasta", "bento"]}
-    ],
-    "pantry_items": [
-      {"name": "spinach", "quantity": 2, "unit": "cups", "days_until_expiry": 2},
-      {"name": "salmon", "quantity": 1, "unit": "fillet", "days_until_expiry": 1}
-    ],
-    "notes": "Weeknight friendly meals"
-  }'
-```
-
-You will receive the agent timeline, plan, reviews, shopping list, and ICS payload in the response.
-
-## Status
-
-This is a capstone project under active development. The architecture is agent-intensive and designed to explore multi-agent patterns, tools, and long-term memory.
+*Built with ❤️ for the planet. Let's use AI for good and responsibly🌍*
