@@ -1,0 +1,63 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ecofood-app
+  namespace: ecofood
+spec:
+  type: LoadBalancer # Exposes external IP
+  ports:
+  - port: 3000
+    targetPort: 3000
+    name: frontend
+  - port: 8000
+    targetPort: 8000
+    name: backend
+  selector:
+    app: ecofood-app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ecofood-app
+  namespace: ecofood
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ecofood-app
+  template:
+    metadata:
+      labels:
+        app: ecofood-app
+    spec:
+      containers:
+      - name: ecofood-app
+        image: ${IMAGE_NAME} # Replaced by deploy script
+        ports:
+        - containerPort: 3000
+          name: frontend
+        - containerPort: 8000
+          name: backend
+        env:
+        # App Configuration
+        - name: GEMINI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ecofood-secrets
+              key: GEMINI_API_KEY
+        - name: DATABASE_URL
+          value: "postgresql+asyncpg://admin:adminpwd@db:5432/ecofood"
+        
+        # Langfuse Configuration
+        - name: LANGFUSE_HOST_URL
+          value: "http://langfuse:3000"
+        - name: LANGFUSE_PUBLIC_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ecofood-secrets
+              key: LANGFUSE_PUBLIC_KEY
+        - name: LANGFUSE_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ecofood-secrets
+              key: LANGFUSE_SECRET_KEY

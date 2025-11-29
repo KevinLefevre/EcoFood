@@ -1,0 +1,109 @@
+# Langfuse Database
+apiVersion: v1
+kind: Service
+metadata:
+  name: langfuse-db
+  namespace: ecofood
+spec:
+  ports:
+  - port: 5432
+    name: postgres
+  clusterIP: None
+  selector:
+    app: langfuse-db
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: langfuse-db
+  namespace: ecofood
+spec:
+  selector:
+    matchLabels:
+      app: langfuse-db
+  serviceName: "langfuse-db"
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: langfuse-db
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        env:
+        - name: POSTGRES_DB
+          value: langfuse
+        - name: POSTGRES_USER
+          value: langfuse
+        - name: POSTGRES_PASSWORD
+          value: langfuse
+        ports:
+        - containerPort: 5432
+          name: postgres
+        volumeMounts:
+        - name: langfuse-pg
+          mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+  - metadata:
+      name: langfuse-pg
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 1Gi
+---
+# Langfuse App
+apiVersion: v1
+kind: Service
+metadata:
+  name: langfuse
+  namespace: ecofood
+spec:
+  ports:
+  - port: 3000
+    targetPort: 3000
+    name: http
+  selector:
+    app: langfuse
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: langfuse
+  namespace: ecofood
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: langfuse
+  template:
+    metadata:
+      labels:
+        app: langfuse
+    spec:
+      containers:
+      - name: langfuse
+        image: langfuse/langfuse:2
+        ports:
+        - containerPort: 3000
+        env:
+        - name: DATABASE_URL
+          value: "postgresql://langfuse:langfuse@langfuse-db:5432/langfuse"
+        - name: NEXTAUTH_URL
+          value: "http://localhost:3100" # Update for production ingress
+        - name: NEXTAUTH_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ecofood-secrets
+              key: LANGFUSE_NEXTAUTH_SECRET
+        - name: ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ecofood-secrets
+              key: LANGFUSE_ENCRYPTION_KEY
+        - name: SALT
+          valueFrom:
+            secretKeyRef:
+              name: ecofood-secrets
+              key: LANGFUSE_SALT
